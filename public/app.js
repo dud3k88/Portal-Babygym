@@ -48,6 +48,7 @@ function switchView(view) {
   else if (!viewNames[view] || view === 'auth') view = 'groups';
   $('nav').hidden = !authInfo.user;
   $('#logout').hidden = !authInfo.user;
+  $('#public-registration-link').hidden = authInfo.user?.role !== 'admin';
   $('#account-name').textContent = authInfo.user?.name || '';
   for (const button of document.querySelectorAll('nav [data-view]')) button.hidden = authInfo.user?.role === 'parent' && !['parent','children'].includes(button.dataset.view);
   for (const label of document.querySelectorAll('nav .nav-label')) label.hidden = authInfo.user?.role === 'parent' && !label.classList.contains('second');

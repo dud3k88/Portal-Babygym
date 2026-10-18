@@ -43,7 +43,7 @@
     <div id="notice" role="status" aria-live="polite" hidden></div>
 
     <section id="auth" class="page auth-page" aria-labelledby="auth-title" hidden>
-      <article class="section-card auth-card"><p class="eyebrow">EVOLUTION ACADEMY</p><h1 id="auth-title">Zaloguj się<span>.</span></h1><p id="auth-description">Wejdź do swojego panelu.</p><form id="auth-form"><label id="auth-name-label" hidden>Imię i nazwisko<input name="name" maxlength="200" autocomplete="name"></label><label>Email<input name="email" type="email" required autocomplete="username" maxlength="200"></label><label id="auth-phone-label" hidden>Telefon (opcjonalnie)<input name="phone" type="tel" maxlength="200" autocomplete="tel"></label><label>Hasło<input name="password" type="password" required minlength="10" maxlength="200" autocomplete="current-password"></label><p class="hint" id="password-help">Hasło ma od 10 do 200 znaków.</p><button class="primary" type="submit" id="auth-submit">Zaloguj się</button><p id="auth-error" role="alert" hidden></p></form><button type="button" class="tertiary" id="auth-toggle">Nie masz konta? Zarejestruj się jako rodzic</button></article>
+      <article class="section-card auth-card"><p class="eyebrow">EVOLUTION ACADEMY</p><h1 id="auth-title">Zaloguj się<span>.</span></h1><p id="auth-description">Wejdź do swojego panelu.</p><form id="auth-form"><label id="auth-name-label" hidden>Imię i nazwisko<input name="name" maxlength="200" autocomplete="name"></label><label>Email<input name="email" type="email" required autocomplete="username" maxlength="200"></label><label id="auth-phone-label" hidden>Telefon (opcjonalnie)<input name="phone" type="tel" maxlength="200" autocomplete="tel"></label><label>Hasło<input name="password" type="password" required minlength="10" maxlength="200" autocomplete="current-password"></label><p class="hint" id="password-help">Hasło ma od 10 do 200 znaków.</p><button class="primary" type="submit" id="auth-submit">Zaloguj się</button><p id="auth-error" role="alert" hidden></p></form><a href="/zapisy" class="public-registration-entry">Zapisz dziecko bez logowania →</a><button type="button" class="tertiary" id="auth-toggle">Nie masz konta? Zarejestruj się jako rodzic</button></article>
     </section>
 
     <section id="athletes" class="page" aria-labelledby="athletes-title" hidden>
@@ -84,7 +84,7 @@
     </section>
 
     <section id="parent" class="page" aria-labelledby="parent-title" hidden>
-      <div class="page-heading"><h1 id="parent-title">Zapisy na zajęcia<span>.</span></h1></div>
+      <div class="page-heading"><h1 id="parent-title">Zapisy na zajęcia<span>.</span></h1><a href="/zapisy" target="_blank" rel="noopener" class="secondary" id="public-registration-link">Otwórz publiczną stronę zapisów ↗</a></div>
       <article class="section-card registration-card"><label class="registration-location">Lokalizacja<select id="location" required><option value="">Wybierz lokalizację</option></select></label><div id="available-groups" class="registration-groups" aria-live="polite"></div></article>
     </section>
     <section id="children" class="page" aria-labelledby="children-title" hidden>

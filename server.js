@@ -3,7 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { calculateCharge, warsawNow } from './billing.js';
 import { generateSchedule, validDate, isExcluded } from './schedule.js';
-import { createAuth, emailAddress } from './auth.js';
+import { createAuth, emailAddress, passwordHash } from './auth.js';
 mkdirSync('data', { recursive: true });
 const logoPath = process.env.LOGO_PATH || 'data/logo';
 const db = new DatabaseSync(process.env.DB_PATH || 'data/evolution.sqlite');
@@ -137,6 +137,22 @@ async function readJSON(req) {
  let raw='';for await(const chunk of req){raw+=chunk;if(raw.length>50000) throw Error('Zbyt duże żądanie.');}
  return JSON.parse(raw);
 }
+function saveEnrollment(b,athlete) {
+ const parent=db.prepare('SELECT * FROM users WHERE id=?').get(athlete.parent_id);
+     const q=quote(b);
+     const member=db.prepare('SELECT * FROM memberships WHERE group_id=? AND athlete_id=?').get(q.group.id,athlete.id);
+     const count=db.prepare("SELECT COUNT(*) AS n FROM memberships WHERE group_id=? AND status IN ('active','trial')").get(q.group.id).n;
+     if(!member&&count>=q.group.capacity) throw Error('Brak wolnych miejsc.');
+     if(db.prepare('SELECT id FROM enrollments WHERE group_id=? AND month=? AND athlete_id=?').get(q.group.id,b.month,athlete.id)) throw Error('Zawodnik jest już zapisany w tej grupie w wybranym miesiącu.');
+     const id=Number(db.prepare('INSERT INTO enrollments(group_id,parent,email,child,month,trial_id,amount,created_at,athlete_id) VALUES(?,?,?,?,?,?,?,?,?)').run(q.group.id,parent.name,parent.email,athlete.name,b.month,q.trial,q.amount,q.joinedAt,athlete.id).lastInsertRowid);
+     db.prepare('INSERT OR IGNORE INTO memberships(group_id,athlete_id,status,joined_at,trial_id) VALUES(?,?,?,?,?)').run(q.group.id,athlete.id,q.trial?'trial':'active',q.joinedAt,q.trial);
+     if(!q.trial) db.prepare("UPDATE memberships SET status='active',trial_id=NULL WHERE group_id=? AND athlete_id=?").run(q.group.id,athlete.id);
+     for(const term of sessionsWithStatus().filter(s=>s.group_id===q.group.id&&s.starts_at.startsWith(b.month)&&s.starts_at>=q.joinedAt&&!s.cancelled&&(!q.trial||s.id===q.trial))) db.prepare('INSERT INTO enrollment_sessions VALUES(?,?,?)').run(id,term.id,q.trial?q.amount:term.price);
+
+ return {id,amount:q.amount};
+}
+
+const signupAttempts=new Map();
 const server = http.createServer(async (req,res) => {
  const url = new URL(req.url, 'http://localhost');
  const send = (status, data) => { res.writeHead(status, {'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(data)); };
@@ -145,6 +161,42 @@ const server = http.createServer(async (req,res) => {
   res.setHeader('X-Content-Type-Options','nosniff');
   if(req.method==='POST'&&req.headers.origin&&req.headers.origin!==`http://${req.headers.host}`&&req.headers.origin!==`https://${req.headers.host}`) return send(403,{error:'Niedozwolone źródło żądania.'});
   if(url.pathname.startsWith('/api/auth/')) return await auth.route(req,res,url.pathname,req.method==='POST'?await readJSON(req):null,send);
+  if(req.method==='GET'&&url.pathname==='/api/public/catalog') {
+   const now=warsawNow();
+   return send(200,{logo:existsSync(logoPath)?'/logo':null,locations:all('SELECT id,name FROM locations ORDER BY name'),groups:all(`SELECT id,location_id,name,capacity,price,trial_price,trials,weekday,start_time,end_time,(SELECT COUNT(*) FROM memberships m WHERE m.group_id=groups.id AND m.status IN ('active','trial')) AS member_count FROM groups`),trainers:all('SELECT id,name FROM trainers ORDER BY name'),group_trainers:all('SELECT * FROM group_trainers'),sessions:sessionsWithStatus().filter(s=>!s.cancelled&&s.starts_at>=now).map(s=>({id:s.id,group_id:s.group_id,starts_at:s.starts_at,ends_at:s.ends_at,excluded:s.excluded})),now});
+  }
+  if(req.method==='POST'&&url.pathname==='/api/public/quote') {
+   const q=quote(await readJSON(req));return send(200,{amount:q.amount,count:q.count});
+  }
+  if(req.method==='POST'&&url.pathname==='/api/public/enroll') {
+   const key=req.socket.remoteAddress,now=Date.now(),attempt=signupAttempts.get(key);
+   if(signupAttempts.size>1000)for(const [ip,value] of signupAttempts)if(value.until<now)signupAttempts.delete(ip);
+   if(attempt&&attempt.until>now&&attempt.count>=15)return send(429,{error:'Zbyt wiele prób. Spróbuj ponownie za 15 minut.'});
+   signupAttempts.set(key,attempt&&attempt.until>now?{...attempt,count:attempt.count+1}:{until:now+900000,count:1});
+   if(!db.prepare("SELECT id FROM users WHERE role='admin'").get())throw Error('Zapisy nie zostały jeszcze uruchomione.');
+   const b=await readJSON(req);
+   const childName=text(b.child_first_name,'imię dziecka')+' '+text(b.child_last_name,'nazwisko dziecka');
+   const parentName=text(b.parent_first_name,'imię rodzica')+' '+text(b.parent_last_name,'nazwisko rodzica');
+   if(childName.length>200||parentName.length>200)throw Error('Imię i nazwisko mogą mieć łącznie maksymalnie 200 znaków.');
+   const email=emailAddress(b.email),phone=text(b.phone,'numer telefonu');
+   if(!/^[+0-9\s().-]+$/.test(phone)||phone.replace(/\D/g,'').length<9||phone.replace(/\D/g,'').length>15)throw Error('Podaj poprawny numer telefonu (9–15 cyfr).');
+   const birthDate=b.birth_date||null;
+   if(birthDate&&(!validDate(birthDate)||birthDate>warsawNow().slice(0,10)))throw Error('Podaj poprawną datę urodzenia dziecka.');
+   if(db.prepare('SELECT id FROM users WHERE email=?').get(email))return send(409,{error:'Konto z tym adresem email już istnieje. Zaloguj się w panelu rodzica, aby zapisać dziecko. Nie twórz drugiego konta.'});
+   quote(b);
+   const hash=await passwordHash(b.password);
+   db.exec('BEGIN IMMEDIATE');
+   let parentId,result;
+   try {
+    if(db.prepare('SELECT id FROM users WHERE email=?').get(email))throw Error('Konto z tym adresem już istnieje. Zaloguj się w panelu rodzica.');
+    parentId=Number(db.prepare("INSERT INTO users(name,email,phone,role,password_hash,created_at) VALUES(?,?,?,'parent',?,?)").run(parentName,email,phone,hash,warsawNow()).lastInsertRowid);
+    const id=Number(db.prepare('INSERT INTO athletes(parent_id,name,birth_date,created_at) VALUES(?,?,?,?)').run(parentId,childName,birthDate,warsawNow()).lastInsertRowid);
+    result=saveEnrollment(b,{id,parent_id:parentId,name:childName});
+    db.exec('COMMIT');
+   }catch(error){db.exec('ROLLBACK');throw error;}
+   auth.session(res,parentId);
+   return send(201,result);
+  }
   const user=auth.user(req);
   if(url.pathname.startsWith('/api/')) {
    if(!user) return send(401,{error:'Zaloguj się, aby kontynuować.'});
@@ -299,19 +351,10 @@ const server = http.createServer(async (req,res) => {
    if(url.pathname==='/api/quote') { const q=quote(b); return send(200,{amount:q.amount,count:q.count}); }
    if(url.pathname==='/api/enrollments') {
     const athlete=athleteById(b.athlete_id,user);
-    const parent=db.prepare('SELECT * FROM users WHERE id=?').get(athlete.parent_id);
     db.exec('BEGIN IMMEDIATE');
     try {
-     const q=quote(b);
-     const member=db.prepare('SELECT * FROM memberships WHERE group_id=? AND athlete_id=?').get(q.group.id,athlete.id);
-     const count=db.prepare("SELECT COUNT(*) AS n FROM memberships WHERE group_id=? AND status IN ('active','trial')").get(q.group.id).n;
-     if(!member&&count>=q.group.capacity) throw Error('Brak wolnych miejsc.');
-     if(db.prepare('SELECT id FROM enrollments WHERE group_id=? AND month=? AND athlete_id=?').get(q.group.id,b.month,athlete.id)) throw Error('Zawodnik jest już zapisany w tej grupie w wybranym miesiącu.');
-     const id=Number(db.prepare('INSERT INTO enrollments(group_id,parent,email,child,month,trial_id,amount,created_at,athlete_id) VALUES(?,?,?,?,?,?,?,?,?)').run(q.group.id,parent.name,parent.email,athlete.name,b.month,q.trial,q.amount,q.joinedAt,athlete.id).lastInsertRowid);
-     db.prepare('INSERT OR IGNORE INTO memberships(group_id,athlete_id,status,joined_at,trial_id) VALUES(?,?,?,?,?)').run(q.group.id,athlete.id,q.trial?'trial':'active',q.joinedAt,q.trial);
-     if(!q.trial) db.prepare("UPDATE memberships SET status='active',trial_id=NULL WHERE group_id=? AND athlete_id=?").run(q.group.id,athlete.id);
-     for(const term of sessionsWithStatus().filter(s=>s.group_id===q.group.id&&s.starts_at.startsWith(b.month)&&s.starts_at>=q.joinedAt&&!s.cancelled&&(!q.trial||s.id===q.trial))) db.prepare('INSERT INTO enrollment_sessions VALUES(?,?,?)').run(id,term.id,q.trial?q.amount:term.price);
-     db.exec('COMMIT');return send(201,{id,amount:q.amount});
+     const result=saveEnrollment(b,athlete);
+     db.exec('COMMIT');return send(201,result);
     }catch(e){db.exec('ROLLBACK');throw e;}
    }
    if(url.pathname==='/api/adjustments') {
@@ -321,8 +364,8 @@ const server = http.createServer(async (req,res) => {
    }
    return send(404,{error:'Nie znaleziono operacji.'});
   }
-  if(req.method==='GET' && ['/', '/app.js', '/style.css'].includes(url.pathname)) {
-   const name=url.pathname==='/'?'index.html':url.pathname.slice(1);
+  if(req.method==='GET' && ['/', '/zapisy', '/zapisy/', '/public-registration.js', '/public-registration.css', '/app.js', '/style.css'].includes(url.pathname)) {
+   const name=url.pathname==='/'?'index.html':url.pathname==='/zapisy'||url.pathname==='/zapisy/'?'public-registration.html':url.pathname.slice(1);
    res.writeHead(200,{'Content-Type':name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':'text/html; charset=utf-8'});return res.end(readFileSync(new URL('./public/'+name,import.meta.url)));
   }
   send(404,{error:'Nie znaleziono strony.'});

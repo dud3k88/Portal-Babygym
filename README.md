@@ -62,6 +62,7 @@ Hasła są haszowane przez scrypt z losową solą. Sesje są przechowywane po st
 npm test
 python3 test/smoke.py
 python3 test/accounts.py
+python3 test/public_signup.py
 ```
 
 Testy jednostkowe sprawdzają naliczanie opłat, daty i wykluczenia. Test integracyjny na porcie 3107 używa starego schematu bazy i potwierdza migrację, zapisy, wykluczenia, poprawianie nazw, korekty, trenerów, logo i zachowanie danych po restarcie. Test na porcie 3118 sprawdza konta, izolację rodzin, wymuszenie rodzica przy dziecku, liczebność grupy, edycję zapisanej grupy, zachowanie cen i korekt, aktywację i wylogowanie. Oba używają tymczasowych baz i fikcyjnych danych; nie modyfikują bazy deweloperskiej.
@@ -81,3 +82,23 @@ npm run dev
 Późniejsze aktualizacje: zatrzymaj serwer, zrób kopię `data/`, wybierz Fetch origin → Pull origin w GitHub Desktop, uruchom ponownie `npm ci` i `npm run dev`, a następnie odśwież stronę. Jeśli sam edytowałeś kod, zachowaj te zmiany przed aktualizacją; nie używaj force/reset. Dla wersji z ZIP-a zachowaj `data/` i po wykonaniu kopii przenieś ten katalog do nowej wersji.
 
 GitHub synchronizuje kod. Baza, konta, sesje i logo pozostają lokalnie w ignorowanym `data/`; nie są przesyłane przez GitHub Desktop. Migracje schematu uruchamiają się automatycznie. Po tej aktualizacji pierwszy użytkownik lokalnej instalacji musi utworzyć konto administratora.
+
+## Publiczna strona zapisów bez logowania
+
+Otwórz `http://localhost:3000/zapisy` na komputerze, na którym uruchomiono aplikację. Link jest też na ekranie logowania i w administracyjnym podglądzie zapisów. Adres `/zapisy` jest osobną stroną z logo i formularzem, bez bocznego menu i bez wymogu wcześniejszego logowania. Korzysta z tego samego logo wgranego przez administratora; jeśli nie dodano pliku, pokazuje tekstową nazwę marki.
+
+Formularz ma trzy kroki:
+
+1. Wybór lokalizacji, grupy i miesiąca (ewentualnie terminu próbnego), podgląd wolnych miejsc, dnia/godziny, trenera i dynamicznej kwoty.
+2. Imię i nazwisko dziecka oraz opcjonalna data urodzenia.
+3. Imię i nazwisko rodzica, wymagany email i telefon oraz hasło do nowego konta (minimum 10 znaków).
+
+Ostateczne potwierdzenie tworzy konto rodzica, kartotekę dziecka, przypisanie do grupy i naliczenie w jednej transakcji. Serwer ponownie wylicza kwotę i sprawdza miejsca; podana przez klienta kwota lub rola nie wpływają na rozliczenie i uprawnienia. Brak miejsc lub błąd danych wycofuje całą operację, bez pozostawiania pustego konta lub dziecka. Po sukcesie rodzic zostaje zalogowany i przechodzi do „Moje dzieci”.
+
+Istniejący rodzic korzysta z odnośnika „Panel rodzica” i loguje się na dotychczasowe konto. Publiczny formularz nie zakłada drugiego konta na ten sam adres i nie przejmuje kartoteki utworzonej wcześniej przez administrację. Nie wysyła wiadomości email ani SMS. Na razie nie pobiera pieniędzy.
+
+Publiczne API udostępnia wyłącznie lokalizacje, ofertę grup, liczby miejsc, nazwiska trenerów i przyszłe terminy. Nie udostępnia danych zawodników, rodziców, danych kontaktowych trenerów, notatek, sald ani haseł. Konta i panel administracyjny pozostają chronione logowaniem.
+
+`python3 test/public_signup.py` uruchamia izolowaną bazę i serwer na porcie 3126. Sprawdza publiczny katalog, brak prywatnych danych, walidację, atomowy zapis, blokadę duplikatów, miejsca, bezpłatną próbę oraz konkurencję dwóch zapisów o ostatnie miejsce. Test nie zmienia danych aplikacji.
+
+„Bez logowania” nie oznacza jeszcze wdrożenia w Internecie: udostępnienie tego adresu rodzicom spoza komputera wymaga oddzielnego hostingu i HTTPS.

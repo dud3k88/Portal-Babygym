@@ -11,7 +11,7 @@ function required(value, label) {
   if (typeof value !== 'string' || !value.trim() || value.length > 200) throw Error('Uzupełnij pole: ' + label);
   return value.trim();
 }
-async function passwordHash(password) {
+export async function passwordHash(password) {
   if (typeof password !== 'string' || password.length < 10 || password.length > 200) throw Error('Hasło musi mieć od 10 do 200 znaków.');
   const salt = randomBytes(16).toString('hex');
   return salt + ':' + (await scrypt(password, salt, 64)).toString('hex');
@@ -101,5 +101,5 @@ export function createAuth(db) {
     }
     return send(404, { error: 'Nie znaleziono operacji.' });
   }
-  return { user, route, invite };
+  return { user, route, invite, session };
 }
