@@ -3,6 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { calculateCharge, warsawNow } from './billing.js';
 import { generateSchedule, validDate, isExcluded } from './schedule.js';
+import { createAuth, emailAddress } from './auth.js';
 mkdirSync('data', { recursive: true });
 const logoPath = process.env.LOGO_PATH || 'data/logo';
 const db = new DatabaseSync(process.env.DB_PATH || 'data/evolution.sqlite');
@@ -39,9 +40,33 @@ try {
  }
  db.exec('COMMIT');
 } catch(error){db.exec('ROLLBACK');throw error;}
+if(!all('PRAGMA table_info(sessions)').some(c=>c.name==='location_id')) db.exec('ALTER TABLE sessions ADD COLUMN location_id INTEGER REFERENCES locations(id)');
+db.exec('UPDATE sessions SET location_id=(SELECT location_id FROM groups WHERE groups.id=sessions.group_id) WHERE location_id IS NULL');
+const auth=createAuth(db);
+db.exec(`CREATE TABLE IF NOT EXISTS athletes(id INTEGER PRIMARY KEY, parent_id INTEGER NOT NULL REFERENCES users(id), name TEXT NOT NULL, birth_date TEXT, notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS memberships(group_id INTEGER NOT NULL REFERENCES groups(id), athlete_id INTEGER NOT NULL REFERENCES athletes(id), status TEXT NOT NULL DEFAULT 'active', joined_at TEXT NOT NULL, trial_id INTEGER REFERENCES sessions(id), PRIMARY KEY(group_id,athlete_id));`);
+if(!all('PRAGMA table_info(enrollments)').some(c=>c.name==='athlete_id')) db.exec('ALTER TABLE enrollments ADD COLUMN athlete_id INTEGER REFERENCES athletes(id)');
+if(!all('PRAGMA table_info(sessions)').some(c=>c.name==='cancelled')) db.exec('ALTER TABLE sessions ADD COLUMN cancelled INTEGER NOT NULL DEFAULT 0');
+// Convert earlier form submissions into persistent parent and athlete records.
+db.exec('BEGIN IMMEDIATE');
+try {
+ for(const e of all('SELECT * FROM enrollments WHERE athlete_id IS NULL ORDER BY id')) {
+  const email=e.email.trim().toLowerCase();
+  let parent=db.prepare('SELECT id FROM users WHERE email=?').get(email);
+  if(!parent) parent={id:Number(db.prepare("INSERT INTO users(name,email,role,created_at) VALUES(?,?,'parent',?)").run(e.parent,email,e.created_at).lastInsertRowid)};
+  let athlete=db.prepare('SELECT id FROM athletes WHERE parent_id=? AND name=?').get(parent.id,e.child);
+  if(!athlete) athlete={id:Number(db.prepare('INSERT INTO athletes(parent_id,name,created_at) VALUES(?,?,?)').run(parent.id,e.child,e.created_at).lastInsertRowid)};
+  db.prepare('UPDATE enrollments SET athlete_id=? WHERE id=?').run(athlete.id,e.id);
+ }
+ for(const e of all('SELECT * FROM enrollments ORDER BY id')) {
+  db.prepare('INSERT OR IGNORE INTO memberships(group_id,athlete_id,status,joined_at,trial_id) VALUES(?,?,?,?,?)').run(e.group_id,e.athlete_id,e.trial_id?'trial':'active',e.created_at,e.trial_id);
+  if(!e.trial_id) db.prepare("UPDATE memberships SET status='active',trial_id=NULL WHERE group_id=? AND athlete_id=?").run(e.group_id,e.athlete_id);
+ }
+ db.exec('COMMIT');
+} catch(error){db.exec('ROLLBACK');throw error;}
 function sessionsWithStatus() {
  const groups=all('SELECT * FROM groups'), exclusions=all('SELECT * FROM exclusions');
- return all('SELECT * FROM sessions ORDER BY starts_at').map(s=>({...s,excluded:isExcluded(s,groups.find(g=>g.id===s.group_id),exclusions)}));
+ return all('SELECT * FROM sessions ORDER BY starts_at').map(s=>({...s,excluded:Boolean(s.cancelled)||isExcluded(s,groups.find(g=>g.id===s.group_id),exclusions)}));
 }
 // Backfill the original charged terms once for existing enrollments.
 for(const e of all('SELECT * FROM enrollments WHERE id NOT IN (SELECT enrollment_id FROM enrollment_sessions)')) {
@@ -94,11 +119,39 @@ function quote(b) {
  if (!result.count) throw Error('Brak przyszłych zajęć w wybranym miesiącu.');
  return { ...result, group:g, trial, joinedAt };
 }
+function athleteById(id,user) {
+ const athlete=db.prepare('SELECT * FROM athletes WHERE id=?').get(Number(id));
+ if(!athlete||(user.role!=='admin'&&athlete.parent_id!==user.id)) throw Object.assign(Error('Nie znaleziono zawodnika.'),{status:404});
+ return athlete;
+}
+function stateFor(user) {
+ const admin=user.role==='admin';
+ const athletes=admin?all('SELECT * FROM athletes ORDER BY name'):all('SELECT id,parent_id,name,birth_date,created_at FROM athletes WHERE parent_id=? ORDER BY name',user.id);
+ const ids=new Set(athletes.map(a=>a.id));
+ const enrollments=all(`SELECT e.*, a.name AS child, u.name AS parent, u.email, g.name AS group_name, g.location, e.amount + COALESCE((SELECT SUM(a.amount) FROM adjustments a WHERE a.enrollment_id=e.id),0) AS balance FROM enrollments e JOIN groups g ON g.id=e.group_id JOIN athletes a ON a.id=e.athlete_id JOIN users u ON u.id=a.parent_id ORDER BY e.id DESC`).filter(e=>admin||ids.has(e.athlete_id));
+ const enrollmentIds=new Set(enrollments.map(e=>e.id));
+ return {user,athletes,parents:admin?all("SELECT id,name,email,phone,password_hash IS NOT NULL AS active FROM users WHERE role='parent' ORDER BY name"):[user],memberships:all('SELECT * FROM memberships').filter(m=>admin||ids.has(m.athlete_id)),locations:all('SELECT id,name FROM locations ORDER BY name'),trainers:admin?all('SELECT * FROM trainers ORDER BY name'):all('SELECT id,name FROM trainers ORDER BY name'),group_trainers:all('SELECT * FROM group_trainers'),logo:existsSync(logoPath)?'/logo?v='+Date.now():null,groups:all(`SELECT g.*,(SELECT COUNT(*) FROM memberships m WHERE m.group_id=g.id AND m.status IN ('active','trial')) AS member_count FROM groups g`),sessions:sessionsWithStatus(),exclusions:all('SELECT * FROM exclusions ORDER BY start_date'),enrollments,adjustments:all('SELECT * FROM adjustments ORDER BY id DESC').filter(a=>admin||enrollmentIds.has(a.enrollment_id)),now:warsawNow()};
+}
+async function readJSON(req) {
+ if(!req.headers['content-type']?.startsWith('application/json')) throw Object.assign(Error('Wymagany format JSON.'),{status:415});
+ let raw='';for await(const chunk of req){raw+=chunk;if(raw.length>50000) throw Error('Zbyt duże żądanie.');}
+ return JSON.parse(raw);
+}
 const server = http.createServer(async (req,res) => {
  const url = new URL(req.url, 'http://localhost');
  const send = (status, data) => { res.writeHead(status, {'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(data)); };
  try {
-  if (req.method === 'GET' && url.pathname === '/api/state') return send(200, {locations:all('SELECT id,name FROM locations ORDER BY name'), trainers:all('SELECT * FROM trainers ORDER BY name COLLATE NOCASE'), group_trainers:all('SELECT * FROM group_trainers'), logo:existsSync(logoPath)?'/logo?v='+Date.now():null, groups:all('SELECT * FROM groups'), sessions:sessionsWithStatus(), exclusions:all('SELECT * FROM exclusions ORDER BY start_date'), enrollments:all(`SELECT e.*, g.name AS group_name, g.location, e.amount + COALESCE((SELECT SUM(a.amount) FROM adjustments a WHERE a.enrollment_id=e.id),0) AS balance FROM enrollments e JOIN groups g ON g.id=e.group_id ORDER BY e.id DESC`), adjustments:all('SELECT * FROM adjustments ORDER BY id DESC'), now:warsawNow()});
+  res.setHeader('Cache-Control','no-store');
+  res.setHeader('X-Content-Type-Options','nosniff');
+  if(req.method==='POST'&&req.headers.origin&&req.headers.origin!==`http://${req.headers.host}`&&req.headers.origin!==`https://${req.headers.host}`) return send(403,{error:'Niedozwolone źródło żądania.'});
+  if(url.pathname.startsWith('/api/auth/')) return await auth.route(req,res,url.pathname,req.method==='POST'?await readJSON(req):null,send);
+  const user=auth.user(req);
+  if(url.pathname.startsWith('/api/')) {
+   if(!user) return send(401,{error:'Zaloguj się, aby kontynuować.'});
+   const parentPaths=['/api/state','/api/athletes','/api/athletes/update','/api/quote','/api/enrollments'];
+   if(user.role!=='admin'&&!parentPaths.includes(url.pathname)) return send(403,{error:'Ta operacja wymaga konta administratora.'});
+  }
+  if (req.method === 'GET' && url.pathname === '/api/state') return send(200,stateFor(user));
   if(req.method==='GET'&&url.pathname==='/logo') {
    if(!existsSync(logoPath)) return send(404,{error:'Nie dodano logo.'});
    const logo=readFileSync(logoPath);
@@ -115,8 +168,26 @@ const server = http.createServer(async (req,res) => {
    writeFileSync(logoPath,bytes);return send(201,{ok:true});
   }
   if (req.method === 'POST' && url.pathname.startsWith('/api/')) {
-   let raw=''; for await (const chunk of req) {raw+=chunk; if(raw.length>50000) throw Error('Zbyt duże żądanie.');}
-   const b=JSON.parse(raw);
+   const b=await readJSON(req);
+   if(url.pathname==='/api/parents') {
+    const name=text(b.name,'imię i nazwisko rodzica'),email=emailAddress(b.email),phone=b.phone?text(b.phone,'telefon'):'';
+    if(db.prepare('SELECT id FROM users WHERE email=?').get(email)) throw Error('Rodzic z tym adresem email już istnieje. Wybierz go z listy.');
+    const id=Number(db.prepare("INSERT INTO users(name,email,phone,role,created_at) VALUES(?,?,?,'parent',?)").run(name,email,phone,warsawNow()).lastInsertRowid);
+    return send(201,{id});
+   }
+   if(url.pathname==='/api/parents/invite') return send(200,{token:auth.invite(integer(b.parent_id,1,Number.MAX_SAFE_INTEGER))});
+   if(url.pathname==='/api/athletes'||url.pathname==='/api/athletes/update') {
+    const existing=url.pathname.endsWith('/update')?athleteById(b.id,user):null;
+    const name=text(b.name,'imię i nazwisko zawodnika'),parentId=user.role==='admin'?integer(b.parent_id,1,Number.MAX_SAFE_INTEGER):user.id;
+    if(!db.prepare("SELECT id FROM users WHERE id=? AND role='parent'").get(parentId)) throw Error('Wybierz rodzica z listy. Każdy zawodnik musi mieć rodzica.');
+    const birthDate=b.birth_date||null;
+    if(birthDate&&(!validDate(birthDate)||birthDate>warsawNow().slice(0,10))) throw Error('Podaj poprawną datę urodzenia.');
+    const notes=user.role==='admin'?String(b.notes||''):(existing?.notes||'');
+    if(notes.length>2000) throw Error('Notatka może mieć maksymalnie 2000 znaków.');
+    if(existing) {db.prepare('UPDATE athletes SET parent_id=?,name=?,birth_date=?,notes=? WHERE id=?').run(parentId,name,birthDate,notes,existing.id);return send(200,{id:existing.id});}
+    const id=Number(db.prepare('INSERT INTO athletes(parent_id,name,birth_date,notes,created_at) VALUES(?,?,?,?,?)').run(parentId,name,birthDate,notes,warsawNow()).lastInsertRowid);
+    return send(201,{id});
+   }
    if(url.pathname==='/api/locations' || url.pathname==='/api/locations/update') {
     const name=cleanLocationName(text(b.name,'nazwa lokalizacji')),key=locationKey(name);
     const existing=url.pathname.endsWith('/update')?locationById(b.id):null;
@@ -148,7 +219,8 @@ const server = http.createServer(async (req,res) => {
     try{assignTrainers(g.id,ids);db.exec('COMMIT');return send(200,{ok:true});}
     catch(e){db.exec('ROLLBACK');throw e;}
    }
-   if(url.pathname==='/api/groups') {
+   if(url.pathname==='/api/groups'||url.pathname==='/api/groups/update') {
+    const existing=url.pathname.endsWith('/update')?group(b.id):null;
     const location=locationById(b.location_id), name=text(b.name,'grupa');
     const price=integer(b.price,0,10000000), capacity=integer(b.capacity,1,500), trialPrice=integer(b.trial_price,0,10000000);
     const assigned=trainerIds(b.trainer_ids);
@@ -163,11 +235,34 @@ const server = http.createServer(async (req,res) => {
     }
     db.exec('BEGIN');
     try {
-     const id=Number(db.prepare('INSERT INTO groups(location,location_id,name,capacity,price,trial_price,trials) VALUES(?,?,?,?,?,?,?)').run(location.name,location.id,name,capacity,price,trialPrice,b.trials?1:0).lastInsertRowid);
+     const before=chargedTotals(),now=warsawNow();
+     const count=existing?db.prepare("SELECT COUNT(*) AS n FROM memberships WHERE group_id=? AND status IN ('active','trial')").get(existing.id).n:0;
+     if(capacity<count) throw Error(`Limit nie może być mniejszy od liczby zapisanych zawodników (${count}).`);
+     const id=existing?.id||Number(db.prepare('INSERT INTO groups(location,location_id,name,capacity,price,trial_price,trials) VALUES(?,?,?,?,?,?,?)').run(location.name,location.id,name,capacity,price,trialPrice,b.trials?1:0).lastInsertRowid);
+     db.prepare('UPDATE groups SET location=?,location_id=?,name=?,capacity=?,price=?,trial_price=?,trials=?,start_date=?,end_date=?,start_time=?,end_time=?,weekday=? WHERE id=?').run(location.name,location.id,name,capacity,price,trialPrice,b.trials?1:0,b.start_date||null,b.end_date||null,b.start_time||null,b.end_time||null,b.weekday??null,id);
      assignTrainers(id,assigned);
-     db.prepare('UPDATE groups SET start_date=?,end_date=?,start_time=?,end_time=?,weekday=? WHERE id=?').run(b.start_date||null,b.end_date||null,b.start_time||null,b.end_time||null,b.weekday??null,id);
-     for(const term of terms) db.prepare('INSERT INTO sessions(group_id,starts_at,ends_at,price) VALUES(?,?,?,?)').run(id,term.starts_at,term.ends_at,price);
-     db.exec('COMMIT'); return send(201,{id,count:terms.length});
+     if(!existing) for(const term of terms) db.prepare('INSERT INTO sessions(group_id,starts_at,ends_at,price,location_id) VALUES(?,?,?,?,?)').run(id,term.starts_at,term.ends_at,price,location.id);
+     else {
+      // Keep IDs and original agreed prices in enrollment_sessions; never delete history.
+      const future=all('SELECT * FROM sessions WHERE group_id=? AND starts_at>=? AND cancelled=0',id,now);
+      const used=new Set();
+      for(const term of terms.filter(t=>t.starts_at>=now)) {
+       const sameDay=future.find(old=>!used.has(old.id)&&old.starts_at.slice(0,10)===term.starts_at.slice(0,10));
+       if(sameDay) {
+        used.add(sameDay.id);
+        db.prepare('UPDATE sessions SET starts_at=?,ends_at=?,price=?,location_id=? WHERE id=?').run(term.starts_at,term.ends_at,price,location.id,sameDay.id);
+       } else {
+        const sessionId=Number(db.prepare('INSERT INTO sessions(group_id,starts_at,ends_at,price,location_id) VALUES(?,?,?,?,?)').run(id,term.starts_at,term.ends_at,price,location.id).lastInsertRowid);
+        for(const e of all('SELECT * FROM enrollments WHERE group_id=? AND trial_id IS NULL AND month=? AND created_at<=?',id,term.starts_at.slice(0,7),term.starts_at)) {
+         const agreed=db.prepare('SELECT price FROM enrollment_sessions WHERE enrollment_id=? LIMIT 1').get(e.id)?.price??price;
+         db.prepare('INSERT INTO enrollment_sessions VALUES(?,?,?)').run(e.id,sessionId,agreed);
+        }
+       }
+      }
+      for(const old of future) if(!used.has(old.id)) db.prepare('UPDATE sessions SET cancelled=1 WHERE id=?').run(old.id);
+      reconcileExclusions(before,'Zmiana grafiku grupy: '+name);
+     }
+     db.exec('COMMIT'); return send(existing?200:201,{id,count:terms.length});
     } catch(e) {db.exec('ROLLBACK');throw e;}
    }
    if(url.pathname==='/api/exclusions' || url.pathname==='/api/exclusions/remove') {
@@ -203,16 +298,19 @@ const server = http.createServer(async (req,res) => {
    }
    if(url.pathname==='/api/quote') { const q=quote(b); return send(200,{amount:q.amount,count:q.count}); }
    if(url.pathname==='/api/enrollments') {
-    const parent=text(b.parent,'rodzic'), child=text(b.child,'dziecko'), email=text(b.email,'email');
-    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw Error('Podaj poprawny email.');
+    const athlete=athleteById(b.athlete_id,user);
+    const parent=db.prepare('SELECT * FROM users WHERE id=?').get(athlete.parent_id);
     db.exec('BEGIN IMMEDIATE');
     try {
      const q=quote(b);
-     const count=db.prepare('SELECT COUNT(*) AS n FROM enrollments WHERE group_id=? AND month=?').get(q.group.id,b.month).n;
-     if(count>=q.group.capacity) throw Error('Brak wolnych miejsc.');
-     if(db.prepare('SELECT id FROM enrollments WHERE group_id=? AND month=? AND email=? AND child=?').get(q.group.id,b.month,email,child)) throw Error('Dziecko jest już zapisane w tym miesiącu.');
-     const id=Number(db.prepare('INSERT INTO enrollments(group_id,parent,email,child,month,trial_id,amount,created_at) VALUES(?,?,?,?,?,?,?,?)').run(q.group.id,parent,email,child,b.month,q.trial,q.amount,q.joinedAt).lastInsertRowid);
-     for(const term of sessionsWithStatus().filter(s=>s.group_id===q.group.id&&s.starts_at.startsWith(b.month)&&s.starts_at>=q.joinedAt&&(!q.trial||s.id===q.trial))) db.prepare('INSERT INTO enrollment_sessions VALUES(?,?,?)').run(id,term.id,q.trial?q.amount:term.price);
+     const member=db.prepare('SELECT * FROM memberships WHERE group_id=? AND athlete_id=?').get(q.group.id,athlete.id);
+     const count=db.prepare("SELECT COUNT(*) AS n FROM memberships WHERE group_id=? AND status IN ('active','trial')").get(q.group.id).n;
+     if(!member&&count>=q.group.capacity) throw Error('Brak wolnych miejsc.');
+     if(db.prepare('SELECT id FROM enrollments WHERE group_id=? AND month=? AND athlete_id=?').get(q.group.id,b.month,athlete.id)) throw Error('Zawodnik jest już zapisany w tej grupie w wybranym miesiącu.');
+     const id=Number(db.prepare('INSERT INTO enrollments(group_id,parent,email,child,month,trial_id,amount,created_at,athlete_id) VALUES(?,?,?,?,?,?,?,?,?)').run(q.group.id,parent.name,parent.email,athlete.name,b.month,q.trial,q.amount,q.joinedAt,athlete.id).lastInsertRowid);
+     db.prepare('INSERT OR IGNORE INTO memberships(group_id,athlete_id,status,joined_at,trial_id) VALUES(?,?,?,?,?)').run(q.group.id,athlete.id,q.trial?'trial':'active',q.joinedAt,q.trial);
+     if(!q.trial) db.prepare("UPDATE memberships SET status='active',trial_id=NULL WHERE group_id=? AND athlete_id=?").run(q.group.id,athlete.id);
+     for(const term of sessionsWithStatus().filter(s=>s.group_id===q.group.id&&s.starts_at.startsWith(b.month)&&s.starts_at>=q.joinedAt&&!s.cancelled&&(!q.trial||s.id===q.trial))) db.prepare('INSERT INTO enrollment_sessions VALUES(?,?,?)').run(id,term.id,q.trial?q.amount:term.price);
      db.exec('COMMIT');return send(201,{id,amount:q.amount});
     }catch(e){db.exec('ROLLBACK');throw e;}
    }
@@ -228,6 +326,6 @@ const server = http.createServer(async (req,res) => {
    res.writeHead(200,{'Content-Type':name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':'text/html; charset=utf-8'});return res.end(readFileSync(new URL('./public/'+name,import.meta.url)));
   }
   send(404,{error:'Nie znaleziono strony.'});
- } catch(e) {send(400,{error:e.message});}
+ } catch(e) {send(e.status||400,{error:e.message});}
 });
 server.listen(Number(process.env.PORT||3000), process.env.HOST||'127.0.0.1',()=>console.log('Evolution Academy: serwer uruchomiony'));

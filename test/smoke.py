@@ -1,16 +1,24 @@
-import json, os, subprocess, tempfile, time, urllib.request, urllib.error
+import json, os, subprocess, tempfile, time, urllib.request, urllib.error, http.cookiejar
 with tempfile.TemporaryDirectory() as directory:
+ opener=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
  env={**os.environ,'PORT':'3107','DB_PATH':directory+'/test.sqlite','LOGO_PATH':directory+'/logo'}
  def start():
   p=subprocess.Popen(['node','server.js'],env=env,stdout=subprocess.DEVNULL)
   for _ in range(50):
    try:
-    urllib.request.urlopen('http://127.0.0.1:3107/api/state');return p
+    opener.open('http://127.0.0.1:3107/api/auth/status');return p
    except urllib.error.URLError:time.sleep(.1)
   p.terminate();raise RuntimeError('server did not start')
  def request(path,body=None):
+  if path=='/api/enrollments' and body and 'athlete_id' not in body:
+   state=request('/api/state')
+   parent=next((p for p in state['parents'] if p['email']==body['email']),None)
+   if not parent:parent=request('/api/parents',{'name':body['parent'],'email':body['email']})
+   athlete=next((a for a in state['athletes'] if a['parent_id']==parent['id'] and a['name']==body['child']),None)
+   if not athlete:athlete=request('/api/athletes',{'parent_id':parent['id'],'name':body['child']})
+   body={**body,'athlete_id':athlete['id']}
   r=urllib.request.Request('http://127.0.0.1:3107'+path,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'})
-  with urllib.request.urlopen(r) as response:return json.load(response)
+  with opener.open(r) as response:return json.load(response)
  def registered_location(name):
   match=next((location for location in request('/api/state')['locations'] if location['name']==name),None)
   return match['id'] if match else request('/api/locations',{'name':name})['id']
@@ -32,6 +40,7 @@ with tempfile.TemporaryDirectory() as directory:
   """)
  p=start()
  try:
+  request('/api/auth/setup',{'name':'Administrator testowy','email':'admin@example.org','password':'development-test-password'})
   assert request('/api/state')['enrollments'][0]['balance']==9000
   migrated=request('/api/state')
   legacy_id=migrated['locations'][0]['id']
@@ -44,7 +53,7 @@ with tempfile.TemporaryDirectory() as directory:
   old_exclusion=next(e for e in request('/api/state')['exclusions'] if e['scope']=='group')['id']
   request('/api/exclusions/remove',{'id':old_exclusion})
   assert request('/api/state')['enrollments'][0]['balance']==9000
-  with urllib.request.urlopen('http://127.0.0.1:3107/') as response:assert 'Evolution Academy' in response.read().decode()
+  with opener.open('http://127.0.0.1:3107/') as response:assert 'Evolution Academy' in response.read().decode()
   group=request('/api/groups',{'location_id':registered_location('Przedszkole testowe'),'name':'Liski','capacity':1,'price':5000,'trial_price':0,'trials':True,'dates':['2099-09-03T13:00','2099-09-10T13:00']})
   body={'group_id':group['id'],'month':'2099-09','parent':'Rodzic testowy','email':'test@example.org','child':'Dziecko testowe'}
   assert request('/api/quote',body)=={'amount':10000,'count':2}
@@ -91,14 +100,14 @@ with tempfile.TemporaryDirectory() as directory:
   assert {'group_id':coached,'trainer_id':coach} in request('/api/state')['group_trainers']
   # Logo rejects script/HTML uploads and preserves an original PNG as bytes.
   bad=urllib.request.Request('http://127.0.0.1:3107/api/logo',data=b'<svg onload="alert(1)"></svg>',method='POST')
-  try:urllib.request.urlopen(bad)
+  try:opener.open(bad)
   except urllib.error.HTTPError as error:assert error.code==400
   else:raise AssertionError('SVG was accepted')
   import base64
   png=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=')
   upload=urllib.request.Request('http://127.0.0.1:3107/api/logo',data=png,method='POST')
-  with urllib.request.urlopen(upload) as r:assert r.status==201
-  with urllib.request.urlopen('http://127.0.0.1:3107/logo') as r:assert r.read()==png
+  with opener.open(upload) as r:assert r.status==201
+  with opener.open('http://127.0.0.1:3107/logo') as r:assert r.read()==png
   # Weekly groups, all three exclusion scopes, overlaps and invoice corrections.
   import datetime
   weekday=(datetime.date(2099,9,1).weekday()+1)%7
@@ -175,6 +184,6 @@ with tempfile.TemporaryDirectory() as directory:
   assert next(l for l in request('/api/state')['locations'] if l['id']==a_location)['name']=='Nowe A'
   assert len([l for l in request('/api/state')['locations'] if l['name']=='Legacy'])==1
   assert {'group_id':coached,'trainer_id':coach} in request('/api/state')['group_trainers']
-  with urllib.request.urlopen('http://127.0.0.1:3107/logo') as r:assert r.read()==png
+  with opener.open('http://127.0.0.1:3107/logo') as r:assert r.read()==png
  finally:p.terminate();p.wait()
  print('PASS: lokalizacje, blokada duplikatów, zmiana nazwy, migracja, zapisy, wykluczenia, rozliczenia, trenerzy, logo i restart')

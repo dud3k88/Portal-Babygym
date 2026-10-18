@@ -1,86 +1,81 @@
-# Evolution Academy — wersja deweloperska
+# Evolution Academy — środowisko deweloperskie
 
-Aplikacja internetowa do zapisów na zajęcia. Wymagany Node.js 24+; SQLite jest wbudowane w Node. Brak zależności zewnętrznych.
+System zapisów na zajęcia, kartotek zawodników i miesięcznych należności. Wymaga Node.js 24+; baza SQLite i moduły uwierzytelniania są dostępne w Node. Brak zewnętrznych zależności aplikacji. Python 3 jest potrzebny tylko do testów integracyjnych.
 
 ## Uruchomienie
 
+W katalogu projektu:
+
 ```sh
-cd /workspace/Portal-Babygym
 npm ci
 npm run dev
 ```
 
-Serwer domyślnie nasłuchuje na interfejsie lokalnym, port 3000. `npm start` uruchamia bez obserwowania zmian. Zmienne: `HOST`, `PORT`, `DB_PATH`, `LOGO_PATH` (domyślnie `data/logo`). Proces trzeba uruchomić ponownie w nowej sesji. Dane SQLite znajdują się w ignorowanym katalogu `data/`. Nie twórz dodatkowego worktree: korzystaj z istniejącego repozytorium w izolowanym środowisku zadania.
+Otwórz `http://localhost:3000` na tym samym komputerze. `npm start` uruchamia serwer bez obserwowania plików. Domyślnie serwer nasłuchuje wyłącznie na interfejsie lokalnym. Zmienne: `HOST`, `PORT`, `DB_PATH` (domyślnie `data/evolution.sqlite`), `LOGO_PATH` (domyślnie `data/logo`), `COOKIE_SECURE` (ustawienie `1` wymaga połączenia HTTPS).
 
-## Pierwsza próba
+W chmurze katalog projektu to `/workspace/Portal-Babygym`. Używaj istniejącego repozytorium; nie twórz dodatkowego worktree bez wyraźnej potrzeby zgłoszonej przez użytkownika. Procesy trzeba uruchomić ponownie w nowym zadaniu. Nie zakładaj, że działający serwer przetrwa przywrócenie środowiska.
 
-W dziale „Lokalizacje” dodaj przedszkole. Następnie w dziale „Grupy” wybierz je z listy i utwórz grupę: podaj osobno datę początku i końca cyklu, dzień tygodnia oraz godziny rozpoczęcia i zakończenia. System tworzy wszystkie pasujące terminy włącznie z datami granicznymi (czas Europe/Warsaw, maksymalnie trzy lata). W podglądzie miesięcznym zobaczysz liczbę zajęć, kwotę i wykluczone daty. Starsze grupy i ich terminy pozostają zachowane. W zakładce zapisów wybierz lokalizację, grupę i miesiąc, podaj fikcyjne dane rodzica i dziecka. Wróć do Administracji, sprawdź należność i dodaj korektę z powodem. Kwoty są przechowywane w groszach. Wycenę serwer przelicza ponownie przy zapisie; minione terminy są pomijane. Ujemna korekta obniża należność.
+## Pierwsze konto i przeniesienie starszych danych
 
-## Walidacja
+1. Po pierwszym uruchomieniu otwórz stronę i utwórz konto **administratora**. Ustaw własny adres email i hasło (10–200 znaków). Nie ma domyślnego hasła. Jednorazowy formularz konfiguracji zamyka się po utworzeniu administratora.
+2. Dane ze starszych wersji są przenoszone automatycznie: powstają kartoteki dzieci, rodziców i przypisania do grup. Dawne wpisy tego samego dziecka u tego samego rodzica są łączone w jedną kartotekę. Istniejące rozliczenia i korekty pozostają zachowane.
+3. Rodzice ze starszych zapisów mają profil bez ustawionego hasła. W kartotece dziecka administrator wybiera **Link aktywacyjny rodzica** i przekazuje go właściwemu rodzicowi. Link jest jednorazowy, ważny 24 godziny; wygenerowanie nowego unieważnia poprzedni. Rodzic ustawia własne hasło. Rejestracja tego samego emaila nie przejmuje starego konta.
+4. Nowy rodzic może sam zarejestrować nowe konto przez ekran logowania. Przed testowaniem panelu rodzica wyloguj administratora lub użyj osobnego profilu przeglądarki / okna prywatnego.
+
+Link z adresem localhost działa tylko na komputerze z serwerem. Wersja lokalna nie daje jeszcze rodzicom dostępu przez Internet. Docelowe wdrożenie wymaga własnego adresu HTTPS. Weryfikacja emaila, odzyskiwanie hasła i wysyłka wiadomości nie są jeszcze podłączone. Używaj wyłącznie fikcyjnych danych do czasu przygotowania wdrożenia produkcyjnego.
+
+## Panel administratora
+
+- **Grupy:** najpierw wybierz lokalizację, potem grupę. Karta pokazuje liczbę zapisanych zawodników i limit, miesięczny grafik, stawkę i trenerów. Przycisk **Zawodnicy** otwiera listę dzieci wraz z rodzicami i odsyła do kartotek. Liczebność wynika ze stałych przypisań, a nie z liczby miesięcznych naliczeń.
+- **Zawodnicy:** kartoteka w strukturze lokalizacja → grupa → dziecko, wyszukiwanie po dziecku lub rodzicu, dane dziecka, data urodzenia, kontakt do rodzica, notatka administracyjna, przypisania i historia rozliczeń. Dzieci bez grupy są widoczne osobno. Każdy zawodnik ma przypisanego rodzica; administrator może dodać profil rodzica przed dodaniem dziecka. Zmiana przypisanego rodzica przenosi dostęp do kartoteki i rozliczeń dziecka.
+- **Lokalizacje:** rejestr przedszkoli wybieranych z listy. Nazwy różniące się tylko wielkością liter lub dodatkowymi spacjami nie tworzą duplikatów. Poprawienie nazwy aktualizuje etykiety w całym systemie, zachowując identyfikatory i wykluczenia. Nie zgadujemy, czy różne literówki oznaczają jedno miejsce.
+- **Dni wolne:** dzień lub zakres dla całego systemu, wybranych lokalizacji albo grup. Lokalizacje mogą mieć dni wolne jeszcze przed utworzeniem grup. Święta dodaje administrator — nie są automatycznie importowane.
+- **Trenerzy:** profile prowadzących i przypisania wielu trenerów do jednej grupy. Dodanie profilu nie tworzy konta logowania i nie wysyła zaproszenia. Obecności i konta trenerów są kolejnym etapem.
+- **Rozliczenia:** należności za wybrany miesiąc, ręczne korekty z powodem i historia korekt automatycznych.
+- **Wygląd:** wgranie oryginalnego logo PNG/JPG/WebP do 5 MB. Obraz jest zachowywany bez przetwarzania w lokalnym `data/logo`. Kolory panelu pochodzą z przekazanego znaku marki. Do czasu wgrania pliku widoczna jest tekstowa nazwa.
+
+## Grafik i edycja grup
+
+Tworząc grupę wybierz lokalizację i podaj nazwę, limit, stawkę, opcjonalnych trenerów, daty początku i końca, dzień tygodnia i godziny rozpoczęcia/zakończenia. Pasujące terminy powstaną automatycznie, włącznie z datami granicznymi, maksymalnie na trzy lata. Godziny są interpretowane według czasu polskiego.
+
+**Edytuj grupę** pozwala zmienić ustawienia i przyszły grafik. Limit nie może być mniejszy od liczby przypisanych dzieci. Odbyte zajęcia, zapisy i historyczne naliczenia nie są kasowane. Zmiana samej godziny zachowuje tożsamość terminu. Usunięte przyszłe terminy są oznaczane jako odwołane; nowe daty otrzymują osobne rekordy. Zmiany liczby terminów w opłacanym miesiącu tworzą automatyczne korekty. Nowa stawka dotyczy nowych zapisów, a istniejące rozliczenia zachowują uzgodnione ceny jednostek. Nie realizuje to zwrotu pieniędzy — płatności nie są podłączone.
+
+Zapis próbny dotyczy konkretnego terminu. Jeżeli termin zostanie odwołany, jest korygowany; próba nie jest samoczynnie przenoszona na inną datę. Historia odwołanych terminów pozostaje w bazie. Lokalizacja zajęć jest zapisywana przy terminie, aby zmiana lokalizacji grupy nie zmieniała zasad dawnych wykluczeń.
+
+## Panel rodzica
+
+Rodzic zakłada konto, dodaje dziecko i wybiera lokalizację oraz grupę. Nie wpisuje przy każdym zapisie ponownie danych rodzica i dziecka — wybiera własną kartotekę. Serwer sprawdza własność kartoteki niezależnie od interfejsu.
+
+Po zalogowaniu rodzic widzi tylko swoje dzieci, ich lokalizacje, grupy, najbliższe terminy, należności i historię korekt. Nie widzi innych rodzin ani notatek administracyjnych. Może poprawić dane swojego dziecka. Należność jest liczona z góry za pozostałe zajęcia wybranego miesiąca; minione, odwołane i wykluczone terminy nie są naliczane. Cena próby jest ustawiana w grupie, także na 0 zł.
+
+Stałe przypisanie dziecka do grupy jest oddzielone od miesięcznych rozliczeń, więc kolejne miesiące nie zwiększają liczebności grupy. W tej wersji miesięczne naliczenie dotyczy wybranego miesiąca — automatyczne tworzenie należności na kolejne miesiące pozostaje kolejnym etapem. Nie ma jeszcze płatności online, wpłat, zwrotów, rezygnacji z grupy ani odrabiania zajęć. Przypisania próbne pozostają widoczne do późniejszej obsługi ich statusów. W tym samym miesiącu nie można jeszcze zmienić zapisu próbnego na stały bez obsługi administracyjnej.
+
+## Logowanie i dostęp
+
+Hasła są haszowane przez scrypt z losową solą. Sesje są przechowywane po stronie serwera (w bazie wyłącznie skrót tokenu) i wygasają po 7 dniach. Cookie ma HttpOnly i SameSite=Strict; przy wdrożeniu HTTPS należy włączyć `COOKIE_SECURE=1`. Wylogowanie unieważnia sesję. Operacje administracyjne wymagają roli administratora, a odczyt i zmiana dziecka roli rodzica są ograniczone do jego kartotek. Zapytania zapisujące kontrolują źródło Origin. Operacje logowania i rejestracji mają limit prób. To wersja deweloperska, wymagająca dalszego przygotowania do działania publicznego.
+
+## Testy
 
 ```sh
 npm test
-python test/smoke.py
+python3 test/smoke.py
+python3 test/accounts.py
 ```
 
-Testy jednostkowe obejmują rozliczenia. Smoke test uruchamia własny serwer na porcie 3107 i bazę tymczasową, sprawdza pełny zapis, limit miejsc, korektę i zachowanie danych po restarcie. Nie modyfikuje bazy deweloperskiej.
+Testy jednostkowe sprawdzają naliczanie opłat, daty i wykluczenia. Test integracyjny na porcie 3107 używa starego schematu bazy i potwierdza migrację, zapisy, wykluczenia, poprawianie nazw, korekty, trenerów, logo i zachowanie danych po restarcie. Test na porcie 3118 sprawdza konta, izolację rodzin, wymuszenie rodzica przy dziecku, liczebność grupy, edycję zapisanej grupy, zachowanie cen i korekt, aktywację i wylogowanie. Oba używają tymczasowych baz i fikcyjnych danych; nie modyfikują bazy deweloperskiej.
 
-## Zakres i ograniczenia
+## Aktualizacje i synchronizacja na macOS
 
-To pierwszy fragment aplikacji, wyłącznie do fikcyjnych danych. Brak logowania i rozdzielenia uprawnień — oba widoki są dostępne w tej samej sesji. Nie udostępniaj publicznie i nie wpisuj danych prawdziwych dzieci. Brak integracji płatniczej, wpłat i zwrotów: wyświetlane saldo oznacza należność plus korekty, a nie potwierdzenie płatności. Historia korekt korzysta z administratora testowego, nie uwierzytelnionej tożsamości.
+Zainstaluj GitHub Desktop z https://desktop.github.com/, zaloguj się i wybierz File → Clone Repository → `dud3k88/Portal-Babygym`. Zapisz repozytorium np. w `~/Documents/GitHub/Portal-Babygym`, w nowym folderze. Nie klonuj na istniejący katalog z pobranego ZIP-a.
 
-Dostępne: tworzenie grup i automatycznych grafików tygodniowych, wykluczenia dni dla całego systemu, wybranych lokalizacji i grup, stawki i limit miejsc, ustawienie prób dla grupy z ceną także 0 zł, zapis i miesięczna wycena, korekty z historią oraz trwała baza.
+Jeśli masz wcześniejsze dane, zatrzymaj starą aplikację (Control+C), zrób kopię całego `data/` i skopiuj ten katalog do nowego projektu. Zachowaj oryginalną kopię aż do sprawdzenia danych. W Terminalu:
 
-Kolejne etapy: konta i uprawnienia, edycja grafiku, próby z osobnymi ustawieniami dla konkretnych terminów, przejście z próby na zapis stały bez podwójnego naliczenia, cykliczne rozliczenia kolejnych miesięcy, nieobecności, płatności i pełny rejestr salda klienta. Limit miejsc w prototypie liczony jest na grupę i miesiąc (w tym zapisy próbne); docelowo wymaga rozliczania dostępności na poszczególne terminy. Zapis stały w prototypie dotyczy wybranego miesiąca, bez automatycznego przedłużenia.
+```sh
+cd ~/Documents/GitHub/Portal-Babygym
+npm ci
+npm run dev
+```
 
-## Wykluczenia dni
+Późniejsze aktualizacje: zatrzymaj serwer, zrób kopię `data/`, wybierz Fetch origin → Pull origin w GitHub Desktop, uruchom ponownie `npm ci` i `npm run dev`, a następnie odśwież stronę. Jeśli sam edytowałeś kod, zachowaj te zmiany przed aktualizacją; nie używaj force/reset. Dla wersji z ZIP-a zachowaj `data/` i po wykonaniu kopii przenieś ten katalog do nowej wersji.
 
-W Administracji w sekcji „Dni bez zajęć” podaj zakres dat (dla jednego dnia obie daty są takie same), zakres działania i powód. Możesz wybrać wszystkie lokalizacje, kilka lokalizacji lub kilka grup. Święta nie są importowane automatycznie: administrator wybiera wykluczenia.
-
-Wykluczenia nie kasują terminów; pozostają one widoczne jako przekreślone. Nie są dostępne na próby ani uwzględniane w nowych wycenach. Obowiązują też dla grup utworzonych później. Nakładające się wykluczenia nie liczą się podwójnie.
-
-Dla istniejących zapisów system dodaje do historii automatyczną korektę za wykluczone, pierwotnie naliczone zajęcia (dla próby według jej ceny). Ręczne korekty pozostają zachowane. Usunięcie wykluczenia przywraca zajęcia i odpowiednią należność, o ile nie działa inne wykluczenie; dotyczy też przywróconych terminów w okresie zapisu, wykluczonych już w chwili zapisywania dziecka. Nie stanowi to zwrotu pieniędzy — operator płatności nie jest jeszcze podłączony.
-
-Pierwsze uruchomienie nowej wersji uzupełnia schemat istniejącej bazy i przypisuje terminy do wcześniejszych zapisów. Przed aktualizacją zatrzymaj serwer i wykonaj kopię katalogu `data/`; nie zastępuj go bazą z innej instalacji.
-
-## Aktualizacja na macOS
-
-Zatrzymaj serwer klawiszami Control+C. Jeśli pobierasz ZIP z GitHuba, zachowaj dotychczasowy katalog `data/` i przenieś go do nowej kopii projektu po wykonaniu kopii zapasowej. W folderze nowej wersji uruchom `npm ci` i `npm run dev`. Jeśli używasz klona Git, po kopii bazy możesz użyć `git pull --ff-only` i uruchomić serwer ponownie.
-
-## Działy administratora
-
-Menu po lewej rozdziela „Grupy”, „Lokalizacje”, „Dni wolne”, „Trenerzy”, „Rozliczenia” i „Wygląd”. Formularze dodawania otwierają się w oddzielnych oknach. „Zapisy na zajęcia” pokazują testowy widok rodzica; to nadal jedna aplikacja bez logowania i kontroli uprawnień.
-
-W dziale „Trenerzy” dodaj imię i nazwisko oraz opcjonalnie email i telefon. Tworzenie profilu nie wysyła wiadomości i nie zakłada konta logowania. Grupie można przypisać kilku trenerów przy tworzeniu albo przyciskiem na karcie istniejącej grupy. Można zmienić lub usunąć przypisania bez usuwania trenerów i danych grupy. Przypisania są zachowane po restarcie. Sprawdzanie obecności i konta trenerów to kolejny etap.
-
-Kolory panelu bazują na przesłanym znaku Evolution Academy (róż, koral, pomarańcz i ciemny tekst). Oryginalny obraz logo można zapisać lokalnie z rozmowy i wgrać w „Wygląd → Logo”; jest przechowywany bez przetwarzania i odtwarzania w `data/logo`. Obsługiwane formaty: PNG, JPG, WebP, do 5 MB. Logo jest lokalnym ustawieniem aplikacji i nie trafia do repozytorium. Do momentu wgrania pliku widoczna jest tekstowa nazwa marki.
-
-## Synchronizacja z GitHubem na macOS
-
-Najprościej użyć GitHub Desktop: https://desktop.github.com/.
-
-1. Zainstaluj aplikację, zaloguj się na swoje konto GitHub.
-2. Wybierz File → Clone Repository, repozytorium `dud3k88/Portal-Babygym` (lub zakładkę URL z `https://github.com/dud3k88/Portal-Babygym.git`).
-3. Zapisz je w `~/Documents/GitHub/Portal-Babygym`, w nowym folderze. Nie klonuj na istniejący katalog z pobranego ZIP-a.
-4. Jeśli masz już lokalne dane, zatrzymaj starą aplikację (Control+C), zrób kopię starego katalogu `data/` i skopiuj go w całości do nowego folderu projektu. Nie kasuj starego folderu, zanim nie sprawdzisz danych w nowej aplikacji.
-5. W Terminalu uruchom:
-
-   ```sh
-   cd ~/Documents/GitHub/Portal-Babygym
-   npm ci
-   npm run dev
-   ```
-
-6. Otwórz `http://localhost:3000` w przeglądarce na tym Macu.
-
-Późniejsze aktualizacje: zatrzymaj serwer, zrób kopię `data/`, kliknij Fetch origin i, jeśli są zmiany, Pull origin w GitHub Desktop. Następnie uruchom ponownie `npm ci` i `npm run dev`. Jeśli sam edytowałeś pliki kodu, zachowaj te zmiany przed aktualizacją; nie nadpisuj ich ani nie używaj force/reset.
-
-GitHub synchronizuje kod. Baza i logo pozostają lokalnie w ignorowanym `data/` — nie są przenoszone pomiędzy komputerami przez GitHub Desktop.
-
-## Rejestr lokalizacji
-
-Lokalizacje są dodawane w osobnym dziale, zanim powstaną grupy. Nowa grupa wymaga wyboru zapisanej lokalizacji z listy. W dniach wolnych lista obejmuje również lokalizacje, które nie mają jeszcze grup — można więc zaplanować przerwy z wyprzedzeniem.
-
-Nazwy nie mogą się powtarzać po ujednoliceniu wielkości liter i odstępów. Na przykład „Przedszkole nr 1” i „  PRZEDSZKOLE  NR 1 ” oznaczają tę samą pozycję. Przycisk „Zmień nazwę” aktualizuje nazwę w grupach i wykluczeniach, zachowując stały identyfikator, zapisy i rozliczenia. Błędy pisowni w starych nazwach poprawia administrator; system nie zgaduje, czy dwa różnie nazwane przedszkola są tym samym miejscem.
-
-Przy aktualizacji stare nazwy z grup oraz lokalnych wykluczeń są automatycznie przenoszone do rejestru i powiązane po identyfikatorze. Ta operacja jest powtarzalna i nie tworzy kolejnych kopii po restarcie. Dane lokalne nadal pozostają w `data/`; przed aktualizacją zrób ich kopię.
+GitHub synchronizuje kod. Baza, konta, sesje i logo pozostają lokalnie w ignorowanym `data/`; nie są przesyłane przez GitHub Desktop. Migracje schematu uruchamiają się automatycznie. Po tej aktualizacji pierwszy użytkownik lokalnej instalacji musi utworzyć konto administratora.

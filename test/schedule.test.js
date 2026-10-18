@@ -31,3 +31,10 @@ test('wykluczenia lokalizacji są powiązane po ID mimo zmiany nazwy',()=>{
  assert.equal(isExcluded(session,{id:1,location_id:7,location:'Nowa nazwa'},[exclusion]),true);
  assert.equal(isExcluded(session,{id:2,location_id:8,location:'Stara nazwa'},[exclusion]),false);
 });
+test('historyczny termin zachowuje lokalizację po przeniesieniu grupy',()=>{
+ const session={starts_at:'2026-09-02T13:00:00',location_id:7};
+ const group={id:1,location_id:8,location:'Nowa lokalizacja'};
+ const originalExclusion={scope:'location',location_id:7,start_date:'2026-09-02',end_date:'2026-09-02'};
+ assert.equal(isExcluded(session,group,[originalExclusion]),true);
+ assert.equal(isExcluded(session,group,[{...originalExclusion,location_id:8}]),false);
+});
