@@ -309,6 +309,7 @@ document.addEventListener('click', event => {
   if(button.dataset.registerGroup)openEnrollment(Number(button.dataset.registerGroup));
   if (button.dataset.roster) openRoster(Number(button.dataset.roster));
   if (button.dataset.athlete) openAthleteDetail(Number(button.dataset.athlete));
+  if (button.dataset.athleteTab) selectAthleteTab(button.dataset.athleteTab);
   if (button.hasAttribute('data-new-athlete')) openAthlete();
   if (button.dataset.editAthlete) openAthlete(Number(button.dataset.editAthlete));
   if (button.dataset.invite) createInvitation(Number(button.dataset.invite));
@@ -514,15 +515,9 @@ function renderAthletes() {
     const parent = state.parents.find(entry => entry.id === athlete.parent_id);
     return [athlete.name, parent?.name, parent?.email].join(' ').toLocaleLowerCase('pl').includes(search);
   });
-  const locations = state.locations.map(location => {
-    const groups = state.groups.filter(group => group.location_id === location.id).map(group => {
-      const athletes = matches.filter(athlete => state.memberships.some(member => member.group_id === group.id && member.athlete_id === athlete.id));
-      return athletes.length ? `<details class="roster-branch" open><summary>${escape(group.name)} <span class="pill">${athletes.length} / ${group.capacity}</span></summary>${athletes.map(rosterRow).join('')}</details>` : '';
-    }).join('');
-    return groups ? `<details class="location-branch" open><summary>${escape(location.name)}</summary>${groups}</details>` : '';
-  }).join('');
-  const unassigned = matches.filter(athlete => !state.memberships.some(member => member.athlete_id === athlete.id));
-  $('#athlete-list').innerHTML = locations + (unassigned.length ? `<div class="location-branch"><h3>Bez przypisanej grupy</h3>${unassigned.map(rosterRow).join('')}</div>` : '') || emptyState('users','Brak zawodników','Rodzic może założyć konto i dodać dziecko. Możesz też dodać rodzica i zawodnika ręcznie.');
+  $('#athlete-list').innerHTML = matches.length
+    ? `<p class="athlete-count">Liczba zawodników: ${matches.length}</p><div class="athlete-directory">${matches.map(rosterRow).join('')}</div>`
+    : emptyState('users',search?'Brak wyników':'Brak zawodników',search?'Zmień wpisaną nazwę lub adres email.':'Dodaj zawodnika i przypisz do niego rodzica.');
 }
 
 function updateAthleteSelects() {
@@ -546,16 +541,63 @@ function openAthlete(id = null) {
 }
 
 function openAthleteDetail(id) {
-  const athlete = state.athletes.find(entry => entry.id === id), parent = state.parents.find(entry => entry.id === athlete.parent_id);
+  const athlete = state.athletes.find(entry => entry.id === id);
+  const parent = state.parents.find(entry => entry.id === athlete.parent_id);
+  const admin = state.user.role === 'admin';
+  const parentActive = Boolean(parent?.active ?? !admin);
   const memberships = state.memberships.filter(member => member.athlete_id === id);
   const charges = state.enrollments.filter(enrollment => enrollment.athlete_id === id);
+  const balance = charges.reduce((total,charge)=>total+charge.balance,0);
+  const outstanding = Math.max(0,balance);
+  const credit = Math.max(0,-balance);
+  const olderCharges = charges.filter(charge=>charge.month<state.now.slice(0,7)).reduce((total,charge)=>total+charge.balance,0);
+  const previousDue = Math.max(0,Math.min(outstanding,olderCharges));
+  const tabs = [['data','Dane'],['groups','Grupy'],['parent','Rodzic'],['finances','Rozliczenia']];
   $('#athlete-detail-title').textContent = athlete.name;
-  $('#athlete-detail').innerHTML = `<div class="profile-data"><p><b>Data urodzenia</b><br>${escape(athlete.birth_date || 'Nie podano')}</p><p><b>Rodzic</b><br>${escape(parent?.name || '')}<br>${escape(parent?.email || '')}<br>${escape(parent?.phone || '')}</p>${state.user.role === 'admin' ? `<p><b>Notatka administracyjna</b><br>${escape(athlete.notes || 'Brak')}</p>` : ''}</div><button class="secondary" data-edit-athlete="${id}">Edytuj kartotekę</button><button class="secondary" data-enroll-athlete="${id}">Zapisz do grupy</button>${state.user.role === 'admin' && !parent?.active ? `<button class="secondary" data-invite="${athlete.parent_id}">Link aktywacyjny rodzica</button>` : ''}<h3>Przypisane grupy</h3>${memberships.map(member => {
-    const group=state.groups.find(entry=>entry.id===member.group_id);
-    return `<div class="entry"><strong>${escape(group.location)} / ${escape(group.name)}</strong><small>${member.status==='trial'?'Zapis próbny':'Zapis stały'} · od ${escape(member.joined_at.slice(0,10))}</small></div>`;
-  }).join('') || '<p>Nie przypisano do grupy.</p>'}<h3>Historia rozliczeń</h3>${charges.map(charge=>`<div class="entry">${escape(charge.month)} · ${escape(charge.group_name)}<strong> · ${money(charge.balance)}</strong>${state.adjustments.filter(adjustment=>adjustment.enrollment_id===charge.id).map(adjustment=>`<small>${money(adjustment.amount)} · ${escape(adjustment.reason)}</small>`).join('')}</div>`).join('')||'<p>Brak naliczeń.</p>'}`;
+  $('#athlete-detail').innerHTML = `
+    <div class="athlete-tabs" role="tablist" aria-label="Kartoteka zawodnika">${tabs.map(([key,label],index)=>`<button type="button" role="tab" id="athlete-tab-${key}" aria-controls="athlete-panel-${key}" aria-selected="${index===0}" tabindex="${index===0?0:-1}" data-athlete-tab="${key}">${label}</button>`).join('')}</div>
+    <section role="tabpanel" id="athlete-panel-data" aria-labelledby="athlete-tab-data" tabindex="0">
+      <dl class="athlete-fields"><div><dt>Imię i nazwisko</dt><dd>${escape(athlete.name)}</dd></div><div><dt>Data urodzenia</dt><dd>${escape(athlete.birth_date||'Nie podano')}</dd></div>${admin?`<div class="athlete-note"><dt>Notatka administracyjna</dt><dd>${escape(athlete.notes||'Brak notatki')}</dd></div>`:''}</dl>
+      <button class="secondary" data-edit-athlete="${id}">Edytuj dane</button>
+    </section>
+    <section role="tabpanel" id="athlete-panel-groups" aria-labelledby="athlete-tab-groups" tabindex="0" hidden>
+      <div class="profile-section-heading"><h3>Przypisane grupy</h3><button class="secondary" data-enroll-athlete="${id}">Zapisz do grupy</button></div>
+      ${memberships.map(member=>{
+        const group=state.groups.find(entry=>entry.id===member.group_id);
+        return `<div class="profile-group"><h3>${escape(group.name)}</h3><p>${escape(group.location)}</p><p>${escape(scheduleLabel(group))}</p><p>Trener: ${escape(trainersFor(group.id).map(trainer=>trainer.name).join(', ')||'Nie przypisano')}</p><span class="pill">${member.status==='trial'?'Zapis próbny':'Zapis stały'}</span><small>Od ${escape(member.joined_at.slice(0,10))}</small></div>`;
+      }).join('')||'<p class="hint">Zawodnik nie jest jeszcze przypisany do grupy.</p>'}
+    </section>
+    <section role="tabpanel" id="athlete-panel-parent" aria-labelledby="athlete-tab-parent" tabindex="0" hidden>
+      <dl class="athlete-fields"><div><dt>Rodzic</dt><dd>${escape(parent?.name||'Nie podano')}</dd></div><div><dt>Email</dt><dd>${escape(parent?.email||'Nie podano')}</dd></div><div><dt>Telefon</dt><dd>${escape(parent?.phone||'Nie podano')}</dd></div><div><dt>Konto rodzica</dt><dd>${parentActive?'Aktywne':'Oczekuje na aktywację'}</dd></div></dl>
+      ${admin&&!parentActive?`<button class="secondary" data-invite="${athlete.parent_id}">Utwórz link aktywacyjny</button>`:''}
+    </section>
+    <section role="tabpanel" id="athlete-panel-finances" aria-labelledby="athlete-tab-finances" tabindex="0" hidden>
+      <div class="athlete-finance-summary"><div><span>Do zapłaty</span><strong>${money(outstanding)}</strong></div><div><span>Nadpłata</span><strong>${money(credit)}</strong></div><div><span>Z poprzednich miesięcy</span><strong>${money(previousDue)}</strong></div></div>
+      <p class="hint">Saldo naliczeń: ${money(balance)}. Kwota dodatnia oznacza należność, ujemna — nadpłatę. Płatności online nie są jeszcze podłączone.</p>
+      <h3 class="profile-ledger-title">Historia rozliczeń</h3>
+      ${charges.map(charge=>`<div class="entry"><div class="profile-charge-heading"><strong>${escape(charge.month)} · ${escape(charge.group_name)}</strong><strong>${money(charge.balance)}</strong></div><small>${escape(charge.location)} · naliczono ${money(charge.amount)}</small>${state.adjustments.filter(adjustment=>adjustment.enrollment_id===charge.id).map(adjustment=>`<small>${escape(adjustment.created_at.slice(0,10))} · ${money(adjustment.amount)} · ${escape(adjustment.reason)}</small>`).join('')}</div>`).join('')||'<p class="hint">Brak naliczeń.</p>'}
+    </section>`;
   openDialog('athlete-detail-dialog');
 }
+
+function selectAthleteTab(key,focus=false) {
+  for(const tab of document.querySelectorAll('#athlete-detail [role="tab"]')) {
+    const active=tab.dataset.athleteTab===key;
+    tab.setAttribute('aria-selected',String(active));
+    tab.tabIndex=active?0:-1;
+    document.getElementById(tab.getAttribute('aria-controls')).hidden=!active;
+    if(active&&focus)tab.focus();
+  }
+}
+$('#athlete-detail').addEventListener('keydown',event=>{
+  const tab=event.target.closest('[role="tab"]');
+  if(!tab||!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
+  event.preventDefault();
+  const tabs=[...document.querySelectorAll('#athlete-detail [role="tab"]')];
+  const index=tabs.indexOf(tab);
+  const next=event.key==='Home'?0:event.key==='End'?tabs.length-1:(index+(event.key==='ArrowRight'?1:-1)+tabs.length)%tabs.length;
+  selectAthleteTab(tabs[next].dataset.athleteTab,true);
+});
 
 function renderMyChildren() {
   $('#my-children').innerHTML = state.athletes.map(athlete => {

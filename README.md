@@ -27,7 +27,7 @@ Link z adresem localhost działa tylko na komputerze z serwerem. Wersja lokalna 
 ## Panel administratora
 
 - **Grupy:** najpierw wybierz lokalizację, potem grupę. Grupy są wyświetlane jedna pod drugą. Wiersz pokazuje termin, prowadzącego i liczbę zapisanych osób względem limitu. Przycisk **Wejdź** otwiera osobny widok grupy z zawodnikami, harmonogramem, miesięczną opłatą i przyciskiem edycji ustawień. Wybrany miesiąc dotyczy szczegółów harmonogramu, nie liczebności grupy. Liczebność wynika ze stałych przypisań, a nie z liczby miesięcznych naliczeń.
-- **Zawodnicy:** kartoteka w strukturze lokalizacja → grupa → dziecko, wyszukiwanie po dziecku lub rodzicu, dane dziecka, data urodzenia, kontakt do rodzica, notatka administracyjna, przypisania i historia rozliczeń. Dzieci bez grupy są widoczne osobno. Każdy zawodnik ma przypisanego rodzica; administrator może dodać profil rodzica przed dodaniem dziecka. Zmiana przypisanego rodzica przenosi dostęp do kartoteki i rozliczeń dziecka.
+- **Zawodnicy:** jedna lista kartotek, po jednym wierszu na zawodnika niezależnie od liczby grup i lokalizacji. Wyszukiwanie po dziecku, rodzicu lub emailu. Po wejściu dostępne są zakładki „Dane”, „Grupy”, „Rodzic” i „Rozliczenia”; przypisania nie są powielane na liście głównej. Każdy zawodnik ma przypisanego rodzica; administrator może dodać profil rodzica przed dodaniem dziecka. Zmiana przypisanego rodzica przenosi dostęp do kartoteki i rozliczeń dziecka.
 - **Lokalizacje:** rejestr przedszkoli wybieranych z listy. Nazwy różniące się tylko wielkością liter lub dodatkowymi spacjami nie tworzą duplikatów. Poprawienie nazwy aktualizuje etykiety w całym systemie, zachowując identyfikatory i wykluczenia. Nie zgadujemy, czy różne literówki oznaczają jedno miejsce.
 - **Dni wolne:** dzień lub zakres dla całego systemu, wybranych lokalizacji albo grup. Lokalizacje mogą mieć dni wolne jeszcze przed utworzeniem grup. Święta dodaje administrator — nie są automatycznie importowane.
 - **Trenerzy:** profile prowadzących i przypisania wielu trenerów do jednej grupy. Dodanie profilu nie tworzy konta logowania i nie wysyła zaproszenia. Obecności i konta trenerów są kolejnym etapem.
@@ -106,3 +106,12 @@ Publiczne API udostępnia wyłącznie lokalizacje, ofertę grup, liczby miejsc, 
 Formularz zapisów ma jedną rodzinę pisma i dwie grubości (400 i 600), wyśrodkowane logo oraz odnośnik „Panel rodzica” w prawym górnym rogu. Pole wyboru miesiąca zostało usunięte z obu formularzy zapisów. Miesiąc wyznacza serwer według czasu polskiego; wysłanie przeszłego lub przyszłego miesiąca jest odrzucane, a brak miesiąca w żądaniu oznacza bieżący okres. Próbę również można wybrać wyłącznie z pozostałych terminów tego miesiąca. Podgląd przyszłych miesięcy w kalendarzu administratora pozostaje dostępny do planowania zajęć, ale nie umożliwia wcześniejszego zapisu.
 
 Testy integracyjne uruchamiają serwer z osobnym loaderem `scripts/fixed-clock.mjs` i kontrolowanym czasem (`EA_TEST_NOW`), dzięki czemu przykładowe daty nie przestają działać z upływem czasu. Zwykłe `npm start` i `npm run dev` nie ładują tego modułu i korzystają z rzeczywistego czasu. Testy jednostkowe obejmują zmianę miesiąca oraz przejście roku.
+
+### Zakładki kartoteki zawodnika
+
+- **Dane:** imię i nazwisko, data urodzenia i — tylko dla administratora — notatka wewnętrzna oraz edycja danych.
+- **Grupy:** wszystkie przypisania tego zawodnika z lokalizacją, terminem, trenerami i rodzajem zapisu.
+- **Rodzic:** imię i nazwisko, email, telefon, stan aktywacji konta; administrator może utworzyć link aktywacyjny.
+- **Rozliczenia:** kwota do zapłaty, nadpłata, część należności z poprzednich miesięcy oraz historia naliczeń i korekt ze wszystkich grup tego zawodnika. Saldo naliczeń dodatnie oznacza należność, ujemne nadpłatę. Należność z poprzednich miesięcy jest ograniczona do bieżącej kwoty do zapłaty, aby nie pokazywać zadłużenia pokrytego korektami/nadpłatą. Brak terminów płatności i integracji wpłat nie pozwala oznaczać automatycznie całej kwoty jako przeterminowanego długu.
+
+Zawodnik z dwiema grupami nadal ma jeden wiersz na liście. Dwie odrębne kartoteki o podobnym imieniu nie są automatycznie łączone, bo mogłyby należeć do różnych dzieci. Zakładki działają także klawiaturą (strzałki lewo/prawo, Home, End).
