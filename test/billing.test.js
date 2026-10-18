@@ -1,0 +1,10 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {calculateCharge} from '../billing.js';
+const sessions=[3,10,17,24].map((day,id)=>({id:id+1,starts_at:`2026-09-${String(day).padStart(2,'0')}T13:00:00`,price:5000}));
+test('pełny miesiąc',()=>assert.deepEqual(calculateCharge(sessions,'2026-09-01T00:00:00'),{count:4,amount:20000}));
+test('zapis w połowie miesiąca pomija odbyte terminy',()=>assert.deepEqual(calculateCharge(sessions,'2026-09-12T00:00:00'),{count:2,amount:10000}));
+test('zapis po rozpoczęciu pomija dzisiejsze zajęcia',()=>assert.deepEqual(calculateCharge(sessions,'2026-09-17T13:01:00'),{count:1,amount:5000}));
+test('bezpłatna próba',()=>assert.deepEqual(calculateCharge(sessions,'2026-09-12T00:00:00',3,0),{count:1,amount:0}));
+test('płatna próba nie nalicza całego miesiąca',()=>assert.deepEqual(calculateCharge(sessions,'2026-09-12T00:00:00',3,3000),{count:1,amount:3000}));
+test('próba nie może dotyczyć przeszłego terminu',()=>assert.throws(()=>calculateCharge(sessions,'2026-09-12T00:00:00',1,0)));
