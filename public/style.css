@@ -44,3 +44,39 @@
   .profile-section-heading { flex-wrap: wrap; }
   .profile-charge-heading { flex-wrap: wrap; gap: 5px; }
 }
+
+/* Shared left accent for cards and records throughout the application. */
+:root { --record-accent: #aa4c91; }
+.entry,
+.athlete-directory > .entry,
+.entry:last-child {
+  border: 1px solid #ddcfe4;
+  border-left: 4px solid var(--record-accent);
+  border-radius: 10px;
+  background: #fff;
+  padding: 18px 20px;
+  margin-bottom: 10px;
+}
+.entry:last-child { margin-bottom: 0; }
+.trainer-card,
+.stat,
+.child-card,
+.group-card,
+.profile-group,
+.athlete-finance-summary > div {
+  border-left: 4px solid var(--record-accent);
+}
+.registration-group {
+  border: 1px solid #ddcfe4;
+  border-left: 4px solid var(--record-accent);
+  border-radius: 10px;
+  background: #fff;
+  padding: 20px;
+  margin-top: 12px;
+}
+@media (max-width: 760px) {
+  .entry,
+  .athlete-directory > .entry,
+  .entry:last-child,
+  .registration-group { padding: 16px; }
+}
