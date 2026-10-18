@@ -14,7 +14,7 @@ Serwer domyślnie nasłuchuje na interfejsie lokalnym, port 3000. `npm start` ur
 
 ## Pierwsza próba
 
-W Administracji utwórz lokalizację i grupę: podaj osobno datę początku i końca cyklu, dzień tygodnia oraz godziny rozpoczęcia i zakończenia. System tworzy wszystkie pasujące terminy włącznie z datami granicznymi (czas Europe/Warsaw, maksymalnie trzy lata). W podglądzie miesięcznym zobaczysz liczbę zajęć, kwotę i wykluczone daty. Starsze grupy i ich terminy pozostają zachowane. W zakładce zapisów wybierz lokalizację, grupę i miesiąc, podaj fikcyjne dane rodzica i dziecka. Wróć do Administracji, sprawdź należność i dodaj korektę z powodem. Kwoty są przechowywane w groszach. Wycenę serwer przelicza ponownie przy zapisie; minione terminy są pomijane. Ujemna korekta obniża należność.
+W dziale „Lokalizacje” dodaj przedszkole. Następnie w dziale „Grupy” wybierz je z listy i utwórz grupę: podaj osobno datę początku i końca cyklu, dzień tygodnia oraz godziny rozpoczęcia i zakończenia. System tworzy wszystkie pasujące terminy włącznie z datami granicznymi (czas Europe/Warsaw, maksymalnie trzy lata). W podglądzie miesięcznym zobaczysz liczbę zajęć, kwotę i wykluczone daty. Starsze grupy i ich terminy pozostają zachowane. W zakładce zapisów wybierz lokalizację, grupę i miesiąc, podaj fikcyjne dane rodzica i dziecka. Wróć do Administracji, sprawdź należność i dodaj korektę z powodem. Kwoty są przechowywane w groszach. Wycenę serwer przelicza ponownie przy zapisie; minione terminy są pomijane. Ujemna korekta obniża należność.
 
 ## Walidacja
 
@@ -49,7 +49,7 @@ Zatrzymaj serwer klawiszami Control+C. Jeśli pobierasz ZIP z GitHuba, zachowaj 
 
 ## Działy administratora
 
-Menu po lewej rozdziela „Grupy”, „Dni wolne”, „Trenerzy”, „Rozliczenia” i „Wygląd”. Formularze dodawania otwierają się w oddzielnych oknach. „Zapisy na zajęcia” pokazują testowy widok rodzica; to nadal jedna aplikacja bez logowania i kontroli uprawnień.
+Menu po lewej rozdziela „Grupy”, „Lokalizacje”, „Dni wolne”, „Trenerzy”, „Rozliczenia” i „Wygląd”. Formularze dodawania otwierają się w oddzielnych oknach. „Zapisy na zajęcia” pokazują testowy widok rodzica; to nadal jedna aplikacja bez logowania i kontroli uprawnień.
 
 W dziale „Trenerzy” dodaj imię i nazwisko oraz opcjonalnie email i telefon. Tworzenie profilu nie wysyła wiadomości i nie zakłada konta logowania. Grupie można przypisać kilku trenerów przy tworzeniu albo przyciskiem na karcie istniejącej grupy. Można zmienić lub usunąć przypisania bez usuwania trenerów i danych grupy. Przypisania są zachowane po restarcie. Sprawdzanie obecności i konta trenerów to kolejny etap.
 
@@ -76,3 +76,11 @@ Najprościej użyć GitHub Desktop: https://desktop.github.com/.
 Późniejsze aktualizacje: zatrzymaj serwer, zrób kopię `data/`, kliknij Fetch origin i, jeśli są zmiany, Pull origin w GitHub Desktop. Następnie uruchom ponownie `npm ci` i `npm run dev`. Jeśli sam edytowałeś pliki kodu, zachowaj te zmiany przed aktualizacją; nie nadpisuj ich ani nie używaj force/reset.
 
 GitHub synchronizuje kod. Baza i logo pozostają lokalnie w ignorowanym `data/` — nie są przenoszone pomiędzy komputerami przez GitHub Desktop.
+
+## Rejestr lokalizacji
+
+Lokalizacje są dodawane w osobnym dziale, zanim powstaną grupy. Nowa grupa wymaga wyboru zapisanej lokalizacji z listy. W dniach wolnych lista obejmuje również lokalizacje, które nie mają jeszcze grup — można więc zaplanować przerwy z wyprzedzeniem.
+
+Nazwy nie mogą się powtarzać po ujednoliceniu wielkości liter i odstępów. Na przykład „Przedszkole nr 1” i „  PRZEDSZKOLE  NR 1 ” oznaczają tę samą pozycję. Przycisk „Zmień nazwę” aktualizuje nazwę w grupach i wykluczeniach, zachowując stały identyfikator, zapisy i rozliczenia. Błędy pisowni w starych nazwach poprawia administrator; system nie zgaduje, czy dwa różnie nazwane przedszkola są tym samym miejscem.
+
+Przy aktualizacji stare nazwy z grup oraz lokalnych wykluczeń są automatycznie przenoszone do rejestru i powiązane po identyfikatorze. Ta operacja jest powtarzalna i nie tworzy kolejnych kopii po restarcie. Dane lokalne nadal pozostają w `data/`; przed aktualizacją zrób ich kopię.

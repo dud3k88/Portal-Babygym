@@ -11,6 +11,9 @@ with tempfile.TemporaryDirectory() as directory:
  def request(path,body=None):
   r=urllib.request.Request('http://127.0.0.1:3107'+path,data=json.dumps(body).encode() if body is not None else None,headers={'Content-Type':'application/json'})
   with urllib.request.urlopen(r) as response:return json.load(response)
+ def registered_location(name):
+  match=next((location for location in request('/api/state')['locations'] if location['name']==name),None)
+  return match['id'] if match else request('/api/locations',{'name':name})['id']
  # Simulate an installation created by the previous version, with real persisted records.
  import sqlite3
  with sqlite3.connect(env['DB_PATH']) as legacy:
@@ -19,7 +22,10 @@ with tempfile.TemporaryDirectory() as directory:
    CREATE TABLE sessions(id INTEGER PRIMARY KEY, group_id INTEGER REFERENCES groups(id), starts_at TEXT NOT NULL, price INTEGER NOT NULL);
    CREATE TABLE enrollments(id INTEGER PRIMARY KEY, group_id INTEGER REFERENCES groups(id), parent TEXT NOT NULL, email TEXT NOT NULL, child TEXT NOT NULL, month TEXT NOT NULL, trial_id INTEGER REFERENCES sessions(id), amount INTEGER NOT NULL, created_at TEXT NOT NULL);
    CREATE TABLE adjustments(id INTEGER PRIMARY KEY, enrollment_id INTEGER REFERENCES enrollments(id), amount INTEGER NOT NULL, reason TEXT NOT NULL, created_at TEXT NOT NULL);
+   CREATE TABLE exclusions(id INTEGER PRIMARY KEY, start_date TEXT NOT NULL, end_date TEXT NOT NULL, scope TEXT NOT NULL, location TEXT, group_id INTEGER REFERENCES groups(id), reason TEXT NOT NULL);
+   INSERT INTO exclusions VALUES(1,'2099-10-01','2099-10-01','location','  Legacy  ',NULL,'Stara przerwa');
    INSERT INTO groups VALUES(1,'Legacy','Stara grupa',15,5000,0,0);
+   INSERT INTO groups VALUES(2,'  LEGACY  ','Druga stara grupa',15,5000,0,0);
    INSERT INTO sessions VALUES(1,1,'2099-09-03T13:00:00',5000),(2,1,'2099-09-10T13:00:00',5000);
    INSERT INTO enrollments VALUES(1,1,'Rodzic','old@example.org','Starszy zapis','2099-09',NULL,10000,'2099-09-01T12:00:00');
    INSERT INTO adjustments VALUES(1,1,-1000,'Stary rabat','2099-09-01T12:00:00');
@@ -27,13 +33,19 @@ with tempfile.TemporaryDirectory() as directory:
  p=start()
  try:
   assert request('/api/state')['enrollments'][0]['balance']==9000
+  migrated=request('/api/state')
+  legacy_id=migrated['locations'][0]['id']
+  assert len(migrated['locations'])==1
+  assert all(g['location_id']==legacy_id for g in migrated['groups'])
+  assert migrated['exclusions'][0]['location_id']==legacy_id
+  assert migrated['exclusions'][0]['location']=='Legacy'
   request('/api/exclusions',{'scope':'group','group_id':1,'start_date':'2099-09-03','end_date':'2099-09-03','reason':'Migracja'})
   assert request('/api/state')['enrollments'][0]['balance']==4000
-  old_exclusion=request('/api/state')['exclusions'][0]['id']
+  old_exclusion=next(e for e in request('/api/state')['exclusions'] if e['scope']=='group')['id']
   request('/api/exclusions/remove',{'id':old_exclusion})
   assert request('/api/state')['enrollments'][0]['balance']==9000
   with urllib.request.urlopen('http://127.0.0.1:3107/') as response:assert 'Evolution Academy' in response.read().decode()
-  group=request('/api/groups',{'location':'Przedszkole testowe','name':'Liski','capacity':1,'price':5000,'trial_price':0,'trials':True,'dates':['2099-09-03T13:00','2099-09-10T13:00']})
+  group=request('/api/groups',{'location_id':registered_location('Przedszkole testowe'),'name':'Liski','capacity':1,'price':5000,'trial_price':0,'trials':True,'dates':['2099-09-03T13:00','2099-09-10T13:00']})
   body={'group_id':group['id'],'month':'2099-09','parent':'Rodzic testowy','email':'test@example.org','child':'Dziecko testowe'}
   assert request('/api/quote',body)=={'amount':10000,'count':2}
   enrollment=request('/api/enrollments',body)
@@ -43,6 +55,22 @@ with tempfile.TemporaryDirectory() as directory:
   try:request('/api/enrollments',{**body,'child':'Drugie dziecko'})
   except urllib.error.HTTPError as error:assert error.code==400
   else:raise AssertionError('capacity not enforced')
+
+  # Registered locations prevent free-text mistakes and duplicate entries.
+  location_id=registered_location('Przedszkole testowe')
+  for name in ['  PRZEDSZKOLE   TESTOWE  ','przedszkole testowe','   ']:
+   try:request('/api/locations',{'name':name})
+   except urllib.error.HTTPError as error:assert error.code==400
+   else:raise AssertionError('duplicate or blank location accepted')
+  for invalid in [{'location':'Nieznane miejsce'},{'location_id':999999},{'location_id':None}]:
+   try:request('/api/groups',{**invalid,'name':'Niepoprawna grupa','capacity':5,'price':5000,'trial_price':0,'dates':['2099-09-01T13:00']})
+   except urllib.error.HTTPError as error:assert error.code==400
+   else:raise AssertionError('unregistered location accepted')
+  # Days off can be planned before a location has any groups.
+  standalone=registered_location('Nowa lokalizacja')
+  request('/api/exclusions',{'scope':'location','targets':[standalone],'start_date':'2099-09-01','end_date':'2099-09-01','reason':'Przerwa przed utworzeniem grup'})
+  new_group=request('/api/groups',{'location_id':standalone,'name':'Nowa grupa','capacity':5,'price':5000,'trial_price':0,'dates':['2099-09-01T13:00','2099-09-08T13:00']})['id']
+  assert request('/api/quote',{'group_id':new_group,'month':'2099-09'})['count']==1
 
   # Trainer profiles and many-to-many assignments, with atomic validation.
   coach=request('/api/trainers',{'name':'Anna Kowalska','email':'anna@example.org','phone':'123456789'})['id']
@@ -59,7 +87,7 @@ with tempfile.TemporaryDirectory() as directory:
   try:request('/api/trainers',{'name':'Błędny email','email':'invalid'})
   except urllib.error.HTTPError as error:assert error.code==400
   else:raise AssertionError('invalid email accepted')
-  coached=request('/api/groups',{'location':'Trenerzy','name':'Grupa z trenerem','capacity':5,'price':5000,'trial_price':0,'trials':False,'dates':['2099-10-01T13:00'],'trainer_ids':[coach]})['id']
+  coached=request('/api/groups',{'location_id':registered_location('Trenerzy'),'name':'Grupa z trenerem','capacity':5,'price':5000,'trial_price':0,'trials':False,'dates':['2099-10-01T13:00'],'trainer_ids':[coach]})['id']
   assert {'group_id':coached,'trainer_id':coach} in request('/api/state')['group_trainers']
   # Logo rejects script/HTML uploads and preserves an original PNG as bytes.
   bad=urllib.request.Request('http://127.0.0.1:3107/api/logo',data=b'<svg onload="alert(1)"></svg>',method='POST')
@@ -75,7 +103,7 @@ with tempfile.TemporaryDirectory() as directory:
   import datetime
   weekday=(datetime.date(2099,9,1).weekday()+1)%7
   def create(location,name):
-   return request('/api/groups',{'location':location,'name':name,'capacity':10,'price':5000,'trial_price':3000,'trials':True,'start_date':'2099-09-01','end_date':'2099-10-31','start_time':'13:00','end_time':'13:30','weekday':weekday})['id']
+   return request('/api/groups',{'location_id':registered_location(location),'name':name,'capacity':10,'price':5000,'trial_price':3000,'trials':True,'start_date':'2099-09-01','end_date':'2099-10-31','start_time':'13:00','end_time':'13:30','weekday':weekday})['id']
   a=create('A','Liski');a2=create('A','Sówki');b=create('B','Liski');c=create('C','Liski')
   initial=request('/api/quote',{'group_id':a,'month':'2099-09'})
   assert initial['count']==5 and initial['amount']==25000
@@ -84,6 +112,9 @@ with tempfile.TemporaryDirectory() as directory:
   def balance():return next(e for e in request('/api/state')['enrollments'] if e['id']==invoice)['balance']
   assert balance()==24000
   def exclude(scope,day,targets=None):
+   if scope=='location':
+    locations=request('/api/state')['locations']
+    targets=[next((entry['id'] for entry in locations if entry['name']==target),999999) if isinstance(target,str) else target for target in targets]
    return request('/api/exclusions',{'start_date':day,'end_date':day,'scope':scope,'targets':targets or [],'reason':'Przerwa testowa'})
   exclude('location','2099-09-01',['A','B'])
   assert balance()==19000
@@ -119,12 +150,31 @@ with tempfile.TemporaryDirectory() as directory:
   ex=next(e for e in request('/api/state')['exclusions'] if e['scope']=='all' and e['start_date']=='2099-09-15')
   request('/api/exclusions/remove',{'id':ex['id']})
   assert next(e for e in request('/api/state')['enrollments'] if e['id']==new_invoice)['balance']==25000
+  # Renaming propagates without breaking IDs, holiday rules or invoice balances.
+  a_location=registered_location('A')
+  exclude('location','2099-09-22',[a_location])
+  before_rename=balance()
+  request('/api/locations/update',{'id':a_location,'name':'Nowe A'})
+  renamed=request('/api/state')
+  assert all(g['location']=='Nowe A' for g in renamed['groups'] if g['location_id']==a_location)
+  assert all(e['location']=='Nowe A' for e in renamed['exclusions'] if e['location_id']==a_location)
+  assert balance()==before_rename
+  assert next(g for g in renamed['groups'] if g['id']==a)['location_id']==a_location
+  try:request('/api/locations/update',{'id':a_location,'name':' b '})
+  except urllib.error.HTTPError as error:assert error.code==400
+  else:raise AssertionError('duplicate rename accepted')
+  assert next(l for l in request('/api/state')['locations'] if l['id']==a_location)['name']=='Nowe A'
+  renamed_ex=next(e for e in renamed['exclusions'] if e['location_id']==a_location)
+  request('/api/exclusions/remove',{'id':renamed_ex['id']})
+  assert balance()==19000
  finally:p.terminate();p.wait()
  p=start()
  try:
   assert next(e for e in request('/api/state')['enrollments'] if e['id']==enrollment['id'])['balance']==5000
   assert balance()==19000
+  assert next(l for l in request('/api/state')['locations'] if l['id']==a_location)['name']=='Nowe A'
+  assert len([l for l in request('/api/state')['locations'] if l['name']=='Legacy'])==1
   assert {'group_id':coached,'trainer_id':coach} in request('/api/state')['group_trainers']
   with urllib.request.urlopen('http://127.0.0.1:3107/logo') as r:assert r.read()==png
  finally:p.terminate();p.wait()
- print('PASS: zapisy, grafik, wykluczenia, korekty, trenerzy, przypisania, logo, migracja i trwałość po restarcie')
+ print('PASS: lokalizacje, blokada duplikatów, zmiana nazwy, migracja, zapisy, wykluczenia, rozliczenia, trenerzy, logo i restart')

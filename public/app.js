@@ -3,7 +3,7 @@ const $ = selector => document.querySelector(selector);
 const money = value => new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' }).format(value / 100);
 const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const dayNames = ['niedziela', 'poniedziałek', 'wtorek', 'środa', 'czwartek', 'piątek', 'sobota'];
-const viewNames = { groups: 'Grupy', 'days-off': 'Dni wolne', trainers: 'Trenerzy', billing: 'Rozliczenia', settings: 'Wygląd', parent: 'Zapisy na zajęcia' };
+const viewNames = { groups: 'Grupy', locations: 'Lokalizacje', 'days-off': 'Dni wolne', trainers: 'Trenerzy', billing: 'Rozliczenia', settings: 'Wygląd', parent: 'Zapisy na zajęcia' };
 let toastTimer;
 
 async function api(path, body) {
@@ -67,6 +67,32 @@ function trainerCheckboxes(ids = []) {
   return state.trainers.map(trainer => `<label class="check"><input type="checkbox" value="${trainer.id}" ${ids.includes(trainer.id) ? 'checked' : ''}>${escape(trainer.name)}</label>`).join('');
 }
 
+function updateLocationSelect() {
+  const select = $('#group-location');
+  const previous = select.value;
+  select.innerHTML = '<option value="">Wybierz lokalizację</option>' + state.locations.map(location => `<option value="${location.id}">${escape(location.name)}</option>`).join('');
+  select.value = previous;
+  $('#group-location-help').innerHTML = state.locations.length
+    ? 'Wybierz zapisaną lokalizację. Nowe przedszkola dodasz w dziale „Lokalizacje”.'
+    : 'Najpierw dodaj przedszkole w dziale „Lokalizacje”. <button type="button" class="tertiary" data-view="locations">Przejdź do lokalizacji →</button>';
+}
+
+function renderLocations() {
+  $('#location-list').innerHTML = state.locations.map(location => {
+    const groups = state.groups.filter(group => group.location_id === location.id);
+    return `<div class="entry exclusion-entry"><div><strong>${escape(location.name)}</strong><small>Liczba grup: ${groups.length}${groups.length ? '<br>' + groups.map(group => escape(group.name)).join(', ') : ' · Możesz już przypisać grupy i zaplanować dni wolne.'}</small></div><button type="button" class="secondary" data-edit-location="${location.id}">Zmień nazwę</button></div>`;
+  }).join('') || emptyState('location', 'Dodaj pierwszą lokalizację', 'Zapisz nazwę przedszkola, a następnie wybierz je przy tworzeniu grupy.', '<button type="button" class="secondary" data-new-location>Dodaj lokalizację</button>');
+}
+
+function openLocation(id = null) {
+  const form = $('#save-location');
+  form.reset();
+  form.elements.id.value = id || '';
+  form.elements.name.value = id ? state.locations.find(location => location.id === id).name : '';
+  $('#location-dialog-title').textContent = id ? 'Zmień nazwę lokalizacji' : 'Nowa lokalizacja';
+  openDialog('location-dialog');
+}
+
 function enrollmentBody() {
   const body = Object.fromEntries(new FormData($('#enroll')));
   return { ...body, group_id: Number(body.group_id), trial_id: body.trial_id ? Number(body.trial_id) : null };
@@ -75,7 +101,7 @@ function enrollmentBody() {
 async function refresh() {
   state = await api('state');
   const selectedLocation = $('#location').value;
-  $('#location').innerHTML = '<option value="">Wybierz lokalizację</option>' + [...new Set(state.groups.map(g => g.location))].map(location => `<option>${escape(location)}</option>`).join('');
+  $('#location').innerHTML = '<option value="">Wybierz lokalizację</option>' + state.locations.filter(location => state.groups.some(group => group.location_id === location.id)).map(location => `<option value="${location.id}">${escape(location.name)}</option>`).join('');
   $('#location').value = selectedLocation;
   updateGroups();
   renderAdmin();
@@ -83,6 +109,8 @@ async function refresh() {
   updateExclusionTargets();
   renderExclusions();
   renderTrainers();
+  renderLocations();
+  updateLocationSelect();
   const selected = selectedIds('#new-group-trainers');
   $('#new-group-trainers').innerHTML = trainerCheckboxes(selected) || '<p class="hint">Nie dodano jeszcze trenerów. Grupę możesz na razie utworzyć bez prowadzącego.</p>';
   $('#brand-logo').hidden = !state.logo;
@@ -92,7 +120,7 @@ async function refresh() {
 
 function updateGroups() {
   const previous = $('#group').value;
-  $('#group').innerHTML = '<option value="">Wybierz grupę</option>' + state.groups.filter(g => g.location === $('#location').value).map(g => `<option value="${g.id}">${escape(g.name)}</option>`).join('');
+  $('#group').innerHTML = '<option value="">Wybierz grupę</option>' + state.groups.filter(g => g.location_id === Number($('#location').value)).map(g => `<option value="${g.id}">${escape(g.name)}</option>`).join('');
   $('#group').value = previous;
   updateTrials();
 }
@@ -148,7 +176,7 @@ function renderCalendar() {
   const month = $('#calendar-month').value;
   const stats = [
     ['Grupy zajęciowe', state.groups.length, 'Wszystkie utworzone grupy', 'groups'],
-    ['Lokalizacje', new Set(state.groups.map(g => g.location)).size, 'Przedszkola i miejsca zajęć', 'calendar'],
+    ['Lokalizacje', state.locations.length, 'Przedszkola i miejsca zajęć', 'location'],
     ['Trenerzy', state.trainers.length, 'Prowadzący w Twoim zespole', 'users']
   ];
   $('#group-stats').innerHTML = stats.map(([label, count, description, icon]) => `<div class="stat"><span class="stat-label">${label}</span><strong>${count}</strong><small>${description}</small><span class="stat-icon"><svg aria-hidden="true"><use href="#i-${icon}"/></svg></span></div>`).join('');
@@ -173,7 +201,7 @@ function updateExclusionTargets() {
   const scope = $('#exclude-scope').value;
   const previous = [...$('#exclude-target').querySelectorAll('input:checked')].map(input => input.value);
   $('#exclude-target-label').hidden = scope === 'all';
-  const options = scope === 'location' ? [...new Set(state.groups.map(g => g.location))].map(location => [location, location]) : scope === 'group' ? state.groups.map(g => [String(g.id), g.location + ' / ' + g.name]) : [];
+  const options = scope === 'location' ? state.locations.map(location => [String(location.id), location.name]) : scope === 'group' ? state.groups.map(g => [String(g.id), g.location + ' / ' + g.name]) : [];
   $('#exclude-target').innerHTML = options.map(([value, label]) => `<label class="check"><input type="checkbox" value="${escape(value)}" ${previous.includes(value) ? 'checked' : ''}>${escape(label)}</label>`).join('');
 }
 
@@ -196,7 +224,10 @@ function openAssignment(groupId) {
 document.addEventListener('click', event => {
   const button = event.target.closest('button');
   if (!button) return;
+  if (button.hasAttribute('data-new-location')) openLocation();
+  if (button.dataset.editLocation) openLocation(Number(button.dataset.editLocation));
   if (button.dataset.view) {
+    button.closest('dialog')?.close();
     window.location.hash = button.dataset.view;
     switchView(button.dataset.view);
   }
@@ -214,13 +245,28 @@ $('#trial').onchange = updateQuote;
 $('#calendar-month').onchange = renderCalendar;
 $('#exclude-scope').onchange = updateExclusionTargets;
 
+$('#save-location').onsubmit = async event => {
+  event.preventDefault();
+  const form = event.target, button = form.querySelector('[type="submit"]');
+  const body = Object.fromEntries(new FormData(form));
+  button.disabled = true;
+  try {
+    const result = await api(body.id ? 'locations/update' : 'locations', { name: body.name, ...(body.id ? { id: Number(body.id) } : {}) });
+    $('#location-dialog').close();
+    await refresh();
+    $('#group-location').value = result.id;
+    notice(body.id ? 'Nazwa lokalizacji została zaktualizowana w całym systemie.' : 'Lokalizacja dodana. Możesz teraz wybrać ją przy tworzeniu grupy.');
+  } catch (error) { notice(error.message, true); }
+  finally { button.disabled = false; }
+};
+
 $('#create-group').onsubmit = async event => {
   event.preventDefault();
   const form = event.target, button = form.querySelector('[type="submit"]');
   button.disabled = true;
   const body = Object.fromEntries(new FormData(form));
   try {
-    const result = await api('groups', { ...body, price: Math.round(Number(body.price) * 100), trial_price: Math.round(Number(body.trial_price) * 100), capacity: Number(body.capacity), trials: body.trials === 'on', weekday: Number(body.weekday), trainer_ids: selectedIds('#new-group-trainers') });
+    const result = await api('groups', { ...body, location_id: Number(body.location_id), price: Math.round(Number(body.price) * 100), trial_price: Math.round(Number(body.trial_price) * 100), capacity: Number(body.capacity), trials: body.trials === 'on', weekday: Number(body.weekday), trainer_ids: selectedIds('#new-group-trainers') });
     form.reset();
     $('#group-dialog').close();
     await refresh();

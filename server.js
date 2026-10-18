@@ -20,6 +20,25 @@ db.exec(`CREATE TABLE IF NOT EXISTS exclusions(id INTEGER PRIMARY KEY, start_dat
 CREATE TABLE IF NOT EXISTS enrollment_sessions(enrollment_id INTEGER REFERENCES enrollments(id), session_id INTEGER REFERENCES sessions(id), price INTEGER NOT NULL, PRIMARY KEY(enrollment_id,session_id));`);
 db.exec(`CREATE TABLE IF NOT EXISTS trainers(id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS group_trainers(group_id INTEGER NOT NULL REFERENCES groups(id), trainer_id INTEGER NOT NULL REFERENCES trainers(id), PRIMARY KEY(group_id,trainer_id));`);
+// Registered locations use stable IDs; names stay available for older records and views.
+db.exec(`CREATE TABLE IF NOT EXISTS locations(id INTEGER PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE);`);
+for(const table of ['groups','exclusions']) {
+ if(!all(`PRAGMA table_info(${table})`).some(c=>c.name==='location_id')) db.exec(`ALTER TABLE ${table} ADD COLUMN location_id INTEGER REFERENCES locations(id)`);
+}
+const cleanLocationName=value=>value.normalize('NFKC').trim().replace(/\s+/gu,' ');
+const locationKey=value=>cleanLocationName(value).toLocaleLowerCase('pl-PL');
+db.exec('BEGIN IMMEDIATE');
+try {
+ for(const table of ['groups','exclusions']) {
+  for(const row of all(`SELECT id,location FROM ${table} WHERE location_id IS NULL AND location IS NOT NULL${table==='exclusions'?" AND scope='location'":''} ORDER BY id`)) {
+   const name=cleanLocationName(row.location);
+   db.prepare('INSERT OR IGNORE INTO locations(name,name_key) VALUES(?,?)').run(name,locationKey(name));
+   const entry=db.prepare('SELECT * FROM locations WHERE name_key=?').get(locationKey(name));
+   db.prepare(`UPDATE ${table} SET location_id=?,location=? WHERE id=?`).run(entry.id,entry.name,row.id);
+  }
+ }
+ db.exec('COMMIT');
+} catch(error){db.exec('ROLLBACK');throw error;}
 function sessionsWithStatus() {
  const groups=all('SELECT * FROM groups'), exclusions=all('SELECT * FROM exclusions');
  return all('SELECT * FROM sessions ORDER BY starts_at').map(s=>({...s,excluded:isExcluded(s,groups.find(g=>g.id===s.group_id),exclusions)}));
@@ -45,6 +64,13 @@ function reconcileExclusions(before,reason) {
 const text = (v, label) => { if (typeof v !== 'string' || !v.trim() || v.length > 200) throw Error(`Uzupełnij pole: ${label}`); return v.trim(); };
 const integer = (v, min, max) => { if (!Number.isSafeInteger(v) || v < min || v > max) throw Error('Nieprawidłowa kwota lub liczba miejsc.'); return v; };
 function group(id) { const g = db.prepare('SELECT * FROM groups WHERE id=?').get(Number(id)); if (!g) throw Error('Nie znaleziono grupy.'); return g; }
+function locationById(id) {
+ const value=Number(id);
+ if(!Number.isSafeInteger(value)||value<1) throw Error('Wybierz lokalizację z listy.');
+ const entry=db.prepare('SELECT * FROM locations WHERE id=?').get(value);
+ if(!entry) throw Error('Nie znaleziono lokalizacji. Dodaj ją najpierw w dziale „Lokalizacje”.');
+ return entry;
+}
 function trainerIds(value=[]) {
  if(!Array.isArray(value)||value.length>100) throw Error('Wybierz trenerów z listy.');
  return [...new Set(value)].map(id=>{
@@ -72,7 +98,7 @@ const server = http.createServer(async (req,res) => {
  const url = new URL(req.url, 'http://localhost');
  const send = (status, data) => { res.writeHead(status, {'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(data)); };
  try {
-  if (req.method === 'GET' && url.pathname === '/api/state') return send(200, {trainers:all('SELECT * FROM trainers ORDER BY name COLLATE NOCASE'), group_trainers:all('SELECT * FROM group_trainers'), logo:existsSync(logoPath)?'/logo?v='+Date.now():null, groups:all('SELECT * FROM groups'), sessions:sessionsWithStatus(), exclusions:all('SELECT * FROM exclusions ORDER BY start_date'), enrollments:all(`SELECT e.*, g.name AS group_name, g.location, e.amount + COALESCE((SELECT SUM(a.amount) FROM adjustments a WHERE a.enrollment_id=e.id),0) AS balance FROM enrollments e JOIN groups g ON g.id=e.group_id ORDER BY e.id DESC`), adjustments:all('SELECT * FROM adjustments ORDER BY id DESC'), now:warsawNow()});
+  if (req.method === 'GET' && url.pathname === '/api/state') return send(200, {locations:all('SELECT id,name FROM locations ORDER BY name'), trainers:all('SELECT * FROM trainers ORDER BY name COLLATE NOCASE'), group_trainers:all('SELECT * FROM group_trainers'), logo:existsSync(logoPath)?'/logo?v='+Date.now():null, groups:all('SELECT * FROM groups'), sessions:sessionsWithStatus(), exclusions:all('SELECT * FROM exclusions ORDER BY start_date'), enrollments:all(`SELECT e.*, g.name AS group_name, g.location, e.amount + COALESCE((SELECT SUM(a.amount) FROM adjustments a WHERE a.enrollment_id=e.id),0) AS balance FROM enrollments e JOIN groups g ON g.id=e.group_id ORDER BY e.id DESC`), adjustments:all('SELECT * FROM adjustments ORDER BY id DESC'), now:warsawNow()});
   if(req.method==='GET'&&url.pathname==='/logo') {
    if(!existsSync(logoPath)) return send(404,{error:'Nie dodano logo.'});
    const logo=readFileSync(logoPath);
@@ -91,6 +117,23 @@ const server = http.createServer(async (req,res) => {
   if (req.method === 'POST' && url.pathname.startsWith('/api/')) {
    let raw=''; for await (const chunk of req) {raw+=chunk; if(raw.length>50000) throw Error('Zbyt duże żądanie.');}
    const b=JSON.parse(raw);
+   if(url.pathname==='/api/locations' || url.pathname==='/api/locations/update') {
+    const name=cleanLocationName(text(b.name,'nazwa lokalizacji')),key=locationKey(name);
+    const existing=url.pathname.endsWith('/update')?locationById(b.id):null;
+    const duplicate=db.prepare('SELECT id FROM locations WHERE name_key=?').get(key);
+    if(duplicate&&duplicate.id!==existing?.id) throw Error('Taka lokalizacja już istnieje. Wybierz ją z listy.');
+    if(!existing) {
+     const id=Number(db.prepare('INSERT INTO locations(name,name_key) VALUES(?,?)').run(name,key).lastInsertRowid);
+     return send(201,{id});
+    }
+    db.exec('BEGIN IMMEDIATE');
+    try {
+     db.prepare('UPDATE locations SET name=?,name_key=? WHERE id=?').run(name,key,existing.id);
+     db.prepare('UPDATE groups SET location=? WHERE location_id=?').run(name,existing.id);
+     db.prepare("UPDATE exclusions SET location=? WHERE scope='location' AND location_id=?").run(name,existing.id);
+     db.exec('COMMIT');return send(200,{id:existing.id});
+    }catch(error){db.exec('ROLLBACK');throw error;}
+   }
    if(url.pathname==='/api/trainers') {
     const name=text(b.name,'imię i nazwisko trenera');
     const email=b.email?text(b.email,'email'):'';
@@ -106,7 +149,7 @@ const server = http.createServer(async (req,res) => {
     catch(e){db.exec('ROLLBACK');throw e;}
    }
    if(url.pathname==='/api/groups') {
-    const location=text(b.location,'lokalizacja'), name=text(b.name,'grupa');
+    const location=locationById(b.location_id), name=text(b.name,'grupa');
     const price=integer(b.price,0,10000000), capacity=integer(b.capacity,1,500), trialPrice=integer(b.trial_price,0,10000000);
     const assigned=trainerIds(b.trainer_ids);
     let terms;
@@ -120,7 +163,7 @@ const server = http.createServer(async (req,res) => {
     }
     db.exec('BEGIN');
     try {
-     const id=Number(db.prepare('INSERT INTO groups(location,name,capacity,price,trial_price,trials) VALUES(?,?,?,?,?,?)').run(location,name,capacity,price,trialPrice,b.trials?1:0).lastInsertRowid);
+     const id=Number(db.prepare('INSERT INTO groups(location,location_id,name,capacity,price,trial_price,trials) VALUES(?,?,?,?,?,?,?)').run(location.name,location.id,name,capacity,price,trialPrice,b.trials?1:0).lastInsertRowid);
      assignTrainers(id,assigned);
      db.prepare('UPDATE groups SET start_date=?,end_date=?,start_time=?,end_time=?,weekday=? WHERE id=?').run(b.start_date||null,b.end_date||null,b.start_time||null,b.end_time||null,b.weekday??null,id);
      for(const term of terms) db.prepare('INSERT INTO sessions(group_id,starts_at,ends_at,price) VALUES(?,?,?,?)').run(id,term.starts_at,term.ends_at,price);
@@ -135,14 +178,14 @@ const server = http.createServer(async (req,res) => {
     } else {
      if(!validDate(b.start_date)||!validDate(b.end_date)||b.end_date<b.start_date) throw Error('Podaj poprawny zakres wykluczenia.');
      if(!['all','location','group'].includes(b.scope)) throw Error('Wybierz zakres wykluczenia.');
-     const base={start_date:b.start_date,end_date:b.end_date,scope:b.scope,reason:text(b.reason,'powód'),location:null,group_id:null};
-     const targets=b.scope==='all'?[null]:(b.targets??[b.scope==='location'?b.location:b.group_id]);
+     const base={start_date:b.start_date,end_date:b.end_date,scope:b.scope,reason:text(b.reason,'powód'),location:null,location_id:null,group_id:null};
+     const targets=b.scope==='all'?[null]:(b.targets??[b.scope==='location'?b.location_id:b.group_id]);
      if(!Array.isArray(targets)||!targets.length||targets.length>500) throw Error('Wybierz lokalizacje lub grupy.');
      entries=[...new Set(targets)].map(target=>{
       const item={...base};
       if(b.scope==='location') {
-       item.location=text(target,'lokalizacja');
-       if(!db.prepare('SELECT id FROM groups WHERE location=?').get(item.location)) throw Error('Nie znaleziono lokalizacji.');
+       const location=locationById(target);
+       item.location=location.name;item.location_id=location.id;
       }
       if(b.scope==='group') item.group_id=group(target).id;
       return item;
@@ -153,7 +196,7 @@ const server = http.createServer(async (req,res) => {
     try {
      const before=chargedTotals();
      if(url.pathname.endsWith('/remove')) db.prepare('DELETE FROM exclusions WHERE id=?').run(entry.id);
-     else for(const item of entries) db.prepare('INSERT INTO exclusions(start_date,end_date,scope,location,group_id,reason) VALUES(?,?,?,?,?,?)').run(item.start_date,item.end_date,item.scope,item.location,item.group_id,item.reason);
+     else for(const item of entries) db.prepare('INSERT INTO exclusions(start_date,end_date,scope,location,location_id,group_id,reason) VALUES(?,?,?,?,?,?,?)').run(item.start_date,item.end_date,item.scope,item.location,item.location_id,item.group_id,item.reason);
      reconcileExclusions(before,(url.pathname.endsWith('/remove')?'Usunięcie wykluczenia: ':'Wykluczenie: ')+entry.reason);
      db.exec('COMMIT');return send(200,{ok:true});
     }catch(e){db.exec('ROLLBACK');throw e;}

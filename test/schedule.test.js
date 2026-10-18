@@ -25,3 +25,9 @@ test('globalne, lokalne i grupowe wykluczenia wraz z granicami zakresu',()=>{
  for(const extra of [{scope:'all'},{scope:'location',location:'A'},{scope:'group',group_id:1}]) assert.equal(isExcluded(session,group,[{...range,...extra}]),true);
  for(const extra of [{scope:'location',location:'B'},{scope:'group',group_id:2},{scope:'all',start_date:'2026-09-03'}]) assert.equal(isExcluded(session,group,[{...range,...extra}]),false);
 });
+test('wykluczenia lokalizacji są powiązane po ID mimo zmiany nazwy',()=>{
+ const session={starts_at:'2026-09-02T13:00:00'};
+ const exclusion={scope:'location',location_id:7,location:'Stara nazwa',start_date:'2026-09-02',end_date:'2026-09-02'};
+ assert.equal(isExcluded(session,{id:1,location_id:7,location:'Nowa nazwa'},[exclusion]),true);
+ assert.equal(isExcluded(session,{id:2,location_id:8,location:'Stara nazwa'},[exclusion]),false);
+});

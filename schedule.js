@@ -18,5 +18,5 @@ export function generateSchedule({start_date,end_date,start_time,end_time,weekda
 }
 export function isExcluded(session,group,exclusions) {
  const date=session.starts_at.slice(0,10);
- return exclusions.some(e=>date>=e.start_date&&date<=e.end_date&&(e.scope==='all'||e.scope==='location'&&e.location===group.location||e.scope==='group'&&e.group_id===group.id));
+ return exclusions.some(e=>date>=e.start_date&&date<=e.end_date&&(e.scope==='all'||e.scope==='location'&&(e.location_id!=null&&group.location_id!=null?e.location_id===group.location_id:e.location===group.location)||e.scope==='group'&&e.group_id===group.id));
 }
