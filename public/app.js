@@ -120,6 +120,7 @@ function enrollmentBody() {
 async function refresh() {
   state = await api('state');
   authInfo.user = state.user;
+  $('[name="month"]').value = state.now.slice(0,7);
   const selectedLocation = $('#location').value;
   $('#location').innerHTML = '<option value="">Wybierz lokalizację</option>' + state.locations.filter(location => state.groups.some(group => group.location_id === location.id)).map(location => `<option value="${location.id}">${escape(location.name)}</option>`).join('');
   $('#location').value = selectedLocation;
@@ -242,19 +243,17 @@ function renderRegistrationGroups() {
   const groups=state.groups.filter(group=>group.location_id===locationId);
   $('#available-groups').innerHTML=groups.map(group=>{
     const free=Math.max(0,group.capacity-group.member_count);
-    const next=state.sessions.find(session=>session.group_id===group.id&&!session.excluded&&session.starts_at>=state.now);
+    const next=state.sessions.find(session=>session.group_id===group.id&&!session.excluded&&session.starts_at>=state.now&&session.starts_at.startsWith(state.now.slice(0,7)));
     const ownMember=state.memberships.some(member=>member.group_id===group.id&&state.athletes.some(athlete=>athlete.id===member.athlete_id));
     const eligible=Boolean(next)&&(free>0||ownMember);
-    return `<div class="registration-group"><div class="registration-group-main"><h2>${escape(group.name)}</h2><p>${escape(scheduleLabel(group))}</p><p>Trener: ${escape(trainersFor(group.id).map(trainer=>trainer.name).join(', ')||'Nie przypisano')}</p>${next?`<p class="hint">Najbliższe zajęcia: ${escape(termLabel(next))}</p>`:''}<p>${money(group.price)} / zajęcia</p></div><div class="registration-group-action"><span class="availability ${free===0?'full':''}">Wolne miejsca: ${free} / ${group.capacity}</span><button class="primary" data-register-group="${group.id}" ${eligible?'':'disabled'}>${!next?'Zapisy zakończone':free===0&&!ownMember?'Brak miejsc':'Zapisz dziecko'}</button></div></div>`;
+    return `<div class="registration-group"><div class="registration-group-main"><h2>${escape(group.name)}</h2><p>${escape(scheduleLabel(group))}</p><p>Trener: ${escape(trainersFor(group.id).map(trainer=>trainer.name).join(', ')||'Nie przypisano')}</p>${next?`<p class="hint">Najbliższe zajęcia: ${escape(termLabel(next))}</p>`:''}<p>${money(group.price)} / zajęcia</p></div><div class="registration-group-action"><span class="availability ${free===0?'full':''}">Wolne miejsca: ${free} / ${group.capacity}</span><button class="primary" data-register-group="${group.id}" ${eligible?'':'disabled'}>${!next?'Brak zajęć w tym miesiącu':free===0&&!ownMember?'Brak miejsc':'Zapisz dziecko'}</button></div></div>`;
   }).join('')||'<p class="hint">W tej lokalizacji nie ma jeszcze grup.</p>';
 }
 
 function openEnrollment(groupId) {
   const group=state.groups.find(entry=>entry.id===groupId);
   $('#group').value=groupId;
-  const future=state.sessions.filter(session=>session.group_id===groupId&&!session.excluded&&session.starts_at>=state.now);
-  const month=$('[name="month"]').value;
-  if(!future.some(session=>session.starts_at.startsWith(month))) $('[name="month"]').value=future[0]?.starts_at.slice(0,7)||state.now.slice(0,7);
+  $('[name="month"]').value=state.now.slice(0,7);
   updateTrials();
   openDialog('enrollment-dialog');
 }

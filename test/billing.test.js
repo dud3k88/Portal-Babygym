@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {calculateCharge} from '../billing.js';
+import {calculateCharge,enrollmentMonth} from '../billing.js';
 const sessions=[3,10,17,24].map((day,id)=>({id:id+1,starts_at:`2026-09-${String(day).padStart(2,'0')}T13:00:00`,price:5000}));
 test('pełny miesiąc',()=>assert.deepEqual(calculateCharge(sessions,'2026-09-01T00:00:00'),{count:4,amount:20000}));
 test('zapis w połowie miesiąca pomija odbyte terminy',()=>assert.deepEqual(calculateCharge(sessions,'2026-09-12T00:00:00'),{count:2,amount:10000}));
@@ -8,3 +8,15 @@ test('zapis po rozpoczęciu pomija dzisiejsze zajęcia',()=>assert.deepEqual(cal
 test('bezpłatna próba',()=>assert.deepEqual(calculateCharge(sessions,'2026-09-12T00:00:00',3,0),{count:1,amount:0}));
 test('płatna próba nie nalicza całego miesiąca',()=>assert.deepEqual(calculateCharge(sessions,'2026-09-12T00:00:00',3,3000),{count:1,amount:3000}));
 test('próba nie może dotyczyć przeszłego terminu',()=>assert.throws(()=>calculateCharge(sessions,'2026-09-12T00:00:00',1,0)));
+
+test('zapis wyłącznie na bieżący miesiąc bez wskazywania daty',()=>{
+ assert.equal(enrollmentMonth(undefined,'2026-10-18T13:00:00'),'2026-10');
+ assert.equal(enrollmentMonth('2026-10','2026-10-18T13:00:00'),'2026-10');
+ for(const month of ['2026-09','2026-12','2027-01','invalid','']) assert.throws(()=>enrollmentMonth(month,'2026-10-18T13:00:00'));
+});
+test('zmiana miesiąca i roku zamyka zapisy na poprzedni okres',()=>{
+ assert.equal(enrollmentMonth(undefined,'2026-12-31T23:59:59'),'2026-12');
+ assert.throws(()=>enrollmentMonth('2027-01','2026-12-31T23:59:59'));
+ assert.equal(enrollmentMonth(undefined,'2027-01-01T00:00:00'),'2027-01');
+ assert.throws(()=>enrollmentMonth('2026-12','2027-01-01T00:00:00'));
+});

@@ -12,7 +12,7 @@ class Client:
    data=json.load(error);assert error.code==status,(path,error.code,data);return data
 
 with tempfile.TemporaryDirectory() as d:
- process=subprocess.Popen(['node','server.js'],env={**os.environ,'PORT':'3126','DB_PATH':d+'/test.sqlite','LOGO_PATH':d+'/logo'},stdout=subprocess.DEVNULL)
+ process=subprocess.Popen(['node','--import','./scripts/fixed-clock.mjs','server.js'],env={**os.environ,'EA_TEST_NOW':'2099-08-31T22:00:00Z','PORT':'3126','DB_PATH':d+'/test.sqlite','LOGO_PATH':d+'/logo'},stdout=subprocess.DEVNULL)
  try:
   guest=Client();admin=Client()
   for _ in range(50):
@@ -24,6 +24,7 @@ with tempfile.TemporaryDirectory() as d:
   trainer=admin.call('/api/trainers',{'name':'Anna Trener','email':'private-trainer@example.org','phone':'555777999'},status=201)['id']
   base={'location_id':location,'name':'Liski','capacity':1,'price':5000,'trial_price':0,'trials':True,'dates':['2099-09-03T13:00','2099-09-10T13:00'],'trainer_ids':[trainer]}
   group=admin.call('/api/groups',base,status=201)['id']
+  later_group=admin.call('/api/groups',{**base,'name':'Grupa od października','dates':['2099-10-01T13:00']},status=201)['id']
   parent=admin.call('/api/parents',{'name':'Private Parent','email':'private-parent@example.org'},status=201)['id']
   admin.call('/api/athletes',{'name':'Private Child','parent_id':parent,'notes':'Internal note'},status=201)
   catalog=guest.call('/api/public/catalog')
@@ -31,6 +32,9 @@ with tempfile.TemporaryDirectory() as d:
   for secret in ['private-parent@example.org','private-trainer@example.org','Private Child','Internal note','555777999','password_hash','parents','athletes']:
    assert secret not in serialized,secret
   assert catalog['groups'][0]['member_count']==0
+  assert catalog['now'].startswith('2099-09-01') # Warsaw time is already September despite the UTC fixture being in August.
+  guest.call('/api/public/quote',{'group_id':group,'month':'2099-10'},status=400)
+  guest.call('/api/public/quote',{'group_id':later_group},status=400)
   guest.call('/api/state',status=401)
   with guest.http.open('http://127.0.0.1:3126/zapisy') as response:assert 'Dane dziecka' in response.read().decode()
   assert guest.call('/api/public/quote',{'group_id':group,'month':'2099-09'})=={'amount':10000,'count':2}
@@ -38,9 +42,9 @@ with tempfile.TemporaryDirectory() as d:
   def totals():
    state=admin.call('/api/state');return len(state['parents']),len(state['athletes']),len(state['enrollments'])
   before=totals()
-  for invalid in [{'phone':''},{'password':'short'},{'birth_date':'2099-01-01'},{'group_id':999999}]:
+  for invalid in [{'phone':''},{'password':'short'},{'birth_date':'2100-01-01'},{'group_id':999999},{'month':'2099-10'},{'month':'2099-08'},{'group_id':later_group,'month':'2099-10'}]:
    guest.call('/api/public/enroll',{**signup,**invalid},status=400);assert totals()==before
-  result=guest.call('/api/public/enroll',signup,status=201)
+  result=guest.call('/api/public/enroll',{key:value for key,value in signup.items() if key!='month'},status=201)
   assert result['amount']==10000
   session=guest.call('/api/auth/status')['user'];assert session['role']=='parent' and session['phone']=='+48 123 456 789'
   own=guest.call('/api/state')

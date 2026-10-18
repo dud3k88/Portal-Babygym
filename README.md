@@ -46,11 +46,11 @@ Zapis próbny dotyczy konkretnego terminu. Jeżeli termin zostanie odwołany, je
 
 Rodzic zakłada konto, dodaje dziecko i wybiera lokalizację oraz grupę. Nie wpisuje przy każdym zapisie ponownie danych rodzica i dziecka — wybiera własną kartotekę. Serwer sprawdza własność kartoteki niezależnie od interfejsu.
 
-Strona **Zapisy na zajęcia** zawiera wyłącznie wybór lokalizacji i listę jej grup. Każdy wiersz pokazuje wolne miejsca, dzień i godziny zajęć, trenera, najbliższą datę i stawkę. Przycisk **Zapisz dziecko** otwiera formularz z wyborem własnego dziecka, miesiąca, ewentualnej próby i dynamiczną kwotą. Pełna grupa blokuje zapis nowej osoby. Jeżeli zajęcia zaczynają się później, formularz wybiera pierwszy miesiąc z dostępnymi terminami.
+Strona **Zapisy na zajęcia** zawiera wyłącznie wybór lokalizacji i listę jej grup. Każdy wiersz pokazuje wolne miejsca, dzień i godziny zajęć, trenera, najbliższą datę i stawkę. Przycisk **Zapisz dziecko** otwiera formularz z wyborem własnego dziecka, ewentualnej próby w bieżącym miesiącu i dynamiczną kwotą. Pełna grupa blokuje zapis nowej osoby. Zapisy są możliwe wyłącznie na zajęcia pozostałe w bieżącym miesiącu według czasu Europe/Warsaw. Grupa bez takich terminów jest widoczna bez możliwości zapisu. Nie można wybrać przyszłego miesiąca, także przez bezpośrednie wywołanie API.
 
-W osobnej zakładce **Moje dzieci** rodzic widzi tylko swoje dzieci, ich lokalizacje, grupy, najbliższe terminy, należności i historię korekt. Nie widzi innych rodzin ani notatek administracyjnych. Może poprawić dane swojego dziecka. Należność jest liczona z góry za pozostałe zajęcia wybranego miesiąca; minione, odwołane i wykluczone terminy nie są naliczane. Cena próby jest ustawiana w grupie, także na 0 zł.
+W osobnej zakładce **Moje dzieci** rodzic widzi tylko swoje dzieci, ich lokalizacje, grupy, najbliższe terminy, należności i historię korekt. Nie widzi innych rodzin ani notatek administracyjnych. Może poprawić dane swojego dziecka. Należność jest liczona z góry za pozostałe zajęcia bieżącego miesiąca; minione, odwołane i wykluczone terminy nie są naliczane. Cena próby jest ustawiana w grupie, także na 0 zł.
 
-Stałe przypisanie dziecka do grupy jest oddzielone od miesięcznych rozliczeń, więc kolejne miesiące nie zwiększają liczebności grupy. W tej wersji miesięczne naliczenie dotyczy wybranego miesiąca — automatyczne tworzenie należności na kolejne miesiące pozostaje kolejnym etapem. Nie ma jeszcze płatności online, wpłat, zwrotów, rezygnacji z grupy ani odrabiania zajęć. Przypisania próbne pozostają widoczne do późniejszej obsługi ich statusów. W tym samym miesiącu nie można jeszcze zmienić zapisu próbnego na stały bez obsługi administracyjnej.
+Stałe przypisanie dziecka do grupy jest oddzielone od miesięcznych rozliczeń, więc kolejne miesiące nie zwiększają liczebności grupy. W tej wersji nowy zapis i jego naliczenie dotyczą wyłącznie bieżącego miesiąca — automatyczne tworzenie należności na kolejne miesiące pozostaje kolejnym etapem. Nie ma jeszcze płatności online, wpłat, zwrotów, rezygnacji z grupy ani odrabiania zajęć. Przypisania próbne pozostają widoczne do późniejszej obsługi ich statusów. W tym samym miesiącu nie można jeszcze zmienić zapisu próbnego na stały bez obsługi administracyjnej.
 
 ## Logowanie i dostęp
 
@@ -89,7 +89,7 @@ Otwórz `http://localhost:3000/zapisy` na komputerze, na którym uruchomiono apl
 
 Formularz ma trzy kroki:
 
-1. Wybór lokalizacji, grupy i miesiąca (ewentualnie terminu próbnego), podgląd wolnych miejsc, dnia/godziny, trenera i dynamicznej kwoty.
+1. Wybór lokalizacji i grupy (ewentualnie terminu próbnego w bieżącym miesiącu), podgląd wolnych miejsc, dnia/godziny, trenera i dynamicznej kwoty.
 2. Imię i nazwisko dziecka oraz opcjonalna data urodzenia.
 3. Imię i nazwisko rodzica, wymagany email i telefon oraz hasło do nowego konta (minimum 10 znaków).
 
@@ -102,3 +102,7 @@ Publiczne API udostępnia wyłącznie lokalizacje, ofertę grup, liczby miejsc, 
 `python3 test/public_signup.py` uruchamia izolowaną bazę i serwer na porcie 3126. Sprawdza publiczny katalog, brak prywatnych danych, walidację, atomowy zapis, blokadę duplikatów, miejsca, bezpłatną próbę oraz konkurencję dwóch zapisów o ostatnie miejsce. Test nie zmienia danych aplikacji.
 
 „Bez logowania” nie oznacza jeszcze wdrożenia w Internecie: udostępnienie tego adresu rodzicom spoza komputera wymaga oddzielnego hostingu i HTTPS.
+
+Formularz zapisów ma jedną rodzinę pisma i dwie grubości (400 i 600), wyśrodkowane logo oraz odnośnik „Panel rodzica” w prawym górnym rogu. Pole wyboru miesiąca zostało usunięte z obu formularzy zapisów. Miesiąc wyznacza serwer według czasu polskiego; wysłanie przeszłego lub przyszłego miesiąca jest odrzucane, a brak miesiąca w żądaniu oznacza bieżący okres. Próbę również można wybrać wyłącznie z pozostałych terminów tego miesiąca. Podgląd przyszłych miesięcy w kalendarzu administratora pozostaje dostępny do planowania zajęć, ale nie umożliwia wcześniejszego zapisu.
+
+Testy integracyjne uruchamiają serwer z osobnym loaderem `scripts/fixed-clock.mjs` i kontrolowanym czasem (`EA_TEST_NOW`), dzięki czemu przykładowe daty nie przestają działać z upływem czasu. Zwykłe `npm start` i `npm run dev` nie ładują tego modułu i korzystają z rzeczywistego czasu. Testy jednostkowe obejmują zmianę miesiąca oraz przejście roku.

@@ -10,3 +10,11 @@ export function warsawNow() {
   const parts = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Warsaw', year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit', hourCycle:'h23' }).format(new Date());
   return parts.replace(' ', 'T');
 }
+
+export function enrollmentMonth(requestedMonth, now = warsawNow()) {
+  const current = now.slice(0, 7);
+  if (requestedMonth != null && requestedMonth !== current) {
+    throw new Error('Zapis jest możliwy tylko na bieżący miesiąc. Odśwież formularz i spróbuj ponownie.');
+  }
+  return current;
+}

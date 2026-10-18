@@ -1,9 +1,9 @@
 import json, os, subprocess, tempfile, time, urllib.request, urllib.error, http.cookiejar
 with tempfile.TemporaryDirectory() as directory:
  opener=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
- env={**os.environ,'PORT':'3107','DB_PATH':directory+'/test.sqlite','LOGO_PATH':directory+'/logo'}
+ env={**os.environ,'EA_TEST_NOW':'2099-08-31T22:00:00Z','PORT':'3107','DB_PATH':directory+'/test.sqlite','LOGO_PATH':directory+'/logo'}
  def start():
-  p=subprocess.Popen(['node','server.js'],env=env,stdout=subprocess.DEVNULL)
+  p=subprocess.Popen(['node','--import','./scripts/fixed-clock.mjs','server.js'],env=env,stdout=subprocess.DEVNULL)
   for _ in range(50):
    try:
     opener.open('http://127.0.0.1:3107/api/auth/status');return p

@@ -16,8 +16,8 @@ class Client:
    return data
 
 with tempfile.TemporaryDirectory() as directory:
- env={**os.environ,'PORT':'3118','DB_PATH':directory+'/accounts.sqlite','LOGO_PATH':directory+'/logo'}
- p=subprocess.Popen(['node','server.js'],env=env,stdout=subprocess.DEVNULL)
+ env={**os.environ,'EA_TEST_NOW':'2099-08-31T22:00:00Z','PORT':'3118','DB_PATH':directory+'/accounts.sqlite','LOGO_PATH':directory+'/logo'}
+ p=subprocess.Popen(['node','--import','./scripts/fixed-clock.mjs','server.js'],env=env,stdout=subprocess.DEVNULL)
  try:
   guest=Client()
   for _ in range(50):
@@ -42,9 +42,9 @@ with tempfile.TemporaryDirectory() as directory:
   assert own['athletes'][0]['parent_id']==registration['user']['id']
   assert 'notes' not in own['athletes'][0]
   invoice=parent.request('enrollments',{'group_id':group,'athlete_id':child,'month':'2099-09'},status=201)['id']
-  # Same athlete has one roster entry across multiple monthly charges.
+  # A future-month signup is rejected and cannot create a second roster entry.
   extra=admin.request('groups/update',{**group_body,'id':group,'end_date':'2099-10-31'})
-  parent.request('enrollments',{'group_id':group,'athlete_id':child,'month':'2099-10'},status=201)
+  parent.request('enrollments',{'group_id':group,'athlete_id':child,'month':'2099-10'},status=400)
   assert next(g for g in admin.request('state')['groups'] if g['id']==group)['member_count']==1
   other=Client()
   other.request('auth/register',{'name':'Inny Rodzic','email':'other@example.org','password':'another-test-password'},status=201)

@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { calculateCharge, warsawNow } from './billing.js';
+import { calculateCharge, warsawNow, enrollmentMonth } from './billing.js';
 import { generateSchedule, validDate, isExcluded } from './schedule.js';
 import { createAuth, emailAddress, passwordHash } from './auth.js';
 mkdirSync('data', { recursive: true });
@@ -110,14 +110,14 @@ function assignTrainers(groupId,ids) {
 }
 function quote(b) {
  const g = group(b.group_id);
- if (!/^\d{4}-\d{2}$/.test(b.month)) throw Error('Wybierz miesiąc.');
- const sessions = sessionsWithStatus().filter(s=>s.group_id===g.id&&s.starts_at.startsWith(b.month)&&!s.excluded);
+ const joinedAt=warsawNow();
+ const month=enrollmentMonth(b.month,joinedAt);
+ const sessions = sessionsWithStatus().filter(s=>s.group_id===g.id&&s.starts_at.startsWith(month)&&!s.excluded);
  const trial = b.trial_id ? Number(b.trial_id) : null;
  if (trial && !g.trials) throw Error('Próby nie są dostępne w tej grupie.');
- const joinedAt=warsawNow();
  const result = calculateCharge(sessions, joinedAt, trial, g.trial_price);
  if (!result.count) throw Error('Brak przyszłych zajęć w wybranym miesiącu.');
- return { ...result, group:g, trial, joinedAt };
+ return { ...result, group:g, trial, joinedAt, month };
 }
 function athleteById(id,user) {
  const athlete=db.prepare('SELECT * FROM athletes WHERE id=?').get(Number(id));
@@ -143,11 +143,11 @@ function saveEnrollment(b,athlete) {
      const member=db.prepare('SELECT * FROM memberships WHERE group_id=? AND athlete_id=?').get(q.group.id,athlete.id);
      const count=db.prepare("SELECT COUNT(*) AS n FROM memberships WHERE group_id=? AND status IN ('active','trial')").get(q.group.id).n;
      if(!member&&count>=q.group.capacity) throw Error('Brak wolnych miejsc.');
-     if(db.prepare('SELECT id FROM enrollments WHERE group_id=? AND month=? AND athlete_id=?').get(q.group.id,b.month,athlete.id)) throw Error('Zawodnik jest już zapisany w tej grupie w wybranym miesiącu.');
-     const id=Number(db.prepare('INSERT INTO enrollments(group_id,parent,email,child,month,trial_id,amount,created_at,athlete_id) VALUES(?,?,?,?,?,?,?,?,?)').run(q.group.id,parent.name,parent.email,athlete.name,b.month,q.trial,q.amount,q.joinedAt,athlete.id).lastInsertRowid);
+     if(db.prepare('SELECT id FROM enrollments WHERE group_id=? AND month=? AND athlete_id=?').get(q.group.id,q.month,athlete.id)) throw Error('Zawodnik jest już zapisany w tej grupie w wybranym miesiącu.');
+     const id=Number(db.prepare('INSERT INTO enrollments(group_id,parent,email,child,month,trial_id,amount,created_at,athlete_id) VALUES(?,?,?,?,?,?,?,?,?)').run(q.group.id,parent.name,parent.email,athlete.name,q.month,q.trial,q.amount,q.joinedAt,athlete.id).lastInsertRowid);
      db.prepare('INSERT OR IGNORE INTO memberships(group_id,athlete_id,status,joined_at,trial_id) VALUES(?,?,?,?,?)').run(q.group.id,athlete.id,q.trial?'trial':'active',q.joinedAt,q.trial);
      if(!q.trial) db.prepare("UPDATE memberships SET status='active',trial_id=NULL WHERE group_id=? AND athlete_id=?").run(q.group.id,athlete.id);
-     for(const term of sessionsWithStatus().filter(s=>s.group_id===q.group.id&&s.starts_at.startsWith(b.month)&&s.starts_at>=q.joinedAt&&!s.cancelled&&(!q.trial||s.id===q.trial))) db.prepare('INSERT INTO enrollment_sessions VALUES(?,?,?)').run(id,term.id,q.trial?q.amount:term.price);
+     for(const term of sessionsWithStatus().filter(s=>s.group_id===q.group.id&&s.starts_at.startsWith(q.month)&&s.starts_at>=q.joinedAt&&!s.cancelled&&(!q.trial||s.id===q.trial))) db.prepare('INSERT INTO enrollment_sessions VALUES(?,?,?)').run(id,term.id,q.trial?q.amount:term.price);
 
  return {id,amount:q.amount};
 }
