@@ -10,7 +10,7 @@ npm ci
 npm run dev
 ```
 
-Serwer domyślnie nasłuchuje na interfejsie lokalnym, port 3000. `npm start` uruchamia bez obserwowania zmian. Zmienne: `HOST`, `PORT`, `DB_PATH`. Proces trzeba uruchomić ponownie w nowej sesji. Dane SQLite znajdują się w ignorowanym katalogu `data/`. Nie twórz dodatkowego worktree: korzystaj z istniejącego repozytorium w izolowanym środowisku zadania.
+Serwer domyślnie nasłuchuje na interfejsie lokalnym, port 3000. `npm start` uruchamia bez obserwowania zmian. Zmienne: `HOST`, `PORT`, `DB_PATH`, `LOGO_PATH` (domyślnie `data/logo`). Proces trzeba uruchomić ponownie w nowej sesji. Dane SQLite znajdują się w ignorowanym katalogu `data/`. Nie twórz dodatkowego worktree: korzystaj z istniejącego repozytorium w izolowanym środowisku zadania.
 
 ## Pierwsza próba
 
@@ -46,3 +46,33 @@ Pierwsze uruchomienie nowej wersji uzupełnia schemat istniejącej bazy i przypi
 ## Aktualizacja na macOS
 
 Zatrzymaj serwer klawiszami Control+C. Jeśli pobierasz ZIP z GitHuba, zachowaj dotychczasowy katalog `data/` i przenieś go do nowej kopii projektu po wykonaniu kopii zapasowej. W folderze nowej wersji uruchom `npm ci` i `npm run dev`. Jeśli używasz klona Git, po kopii bazy możesz użyć `git pull --ff-only` i uruchomić serwer ponownie.
+
+## Działy administratora
+
+Menu po lewej rozdziela „Grupy”, „Dni wolne”, „Trenerzy”, „Rozliczenia” i „Wygląd”. Formularze dodawania otwierają się w oddzielnych oknach. „Zapisy na zajęcia” pokazują testowy widok rodzica; to nadal jedna aplikacja bez logowania i kontroli uprawnień.
+
+W dziale „Trenerzy” dodaj imię i nazwisko oraz opcjonalnie email i telefon. Tworzenie profilu nie wysyła wiadomości i nie zakłada konta logowania. Grupie można przypisać kilku trenerów przy tworzeniu albo przyciskiem na karcie istniejącej grupy. Można zmienić lub usunąć przypisania bez usuwania trenerów i danych grupy. Przypisania są zachowane po restarcie. Sprawdzanie obecności i konta trenerów to kolejny etap.
+
+Kolory panelu bazują na przesłanym znaku Evolution Academy (róż, koral, pomarańcz i ciemny tekst). Oryginalny obraz logo można zapisać lokalnie z rozmowy i wgrać w „Wygląd → Logo”; jest przechowywany bez przetwarzania i odtwarzania w `data/logo`. Obsługiwane formaty: PNG, JPG, WebP, do 5 MB. Logo jest lokalnym ustawieniem aplikacji i nie trafia do repozytorium. Do momentu wgrania pliku widoczna jest tekstowa nazwa marki.
+
+## Synchronizacja z GitHubem na macOS
+
+Najprościej użyć GitHub Desktop: https://desktop.github.com/.
+
+1. Zainstaluj aplikację, zaloguj się na swoje konto GitHub.
+2. Wybierz File → Clone Repository, repozytorium `dud3k88/Portal-Babygym` (lub zakładkę URL z `https://github.com/dud3k88/Portal-Babygym.git`).
+3. Zapisz je w `~/Documents/GitHub/Portal-Babygym`, w nowym folderze. Nie klonuj na istniejący katalog z pobranego ZIP-a.
+4. Jeśli masz już lokalne dane, zatrzymaj starą aplikację (Control+C), zrób kopię starego katalogu `data/` i skopiuj go w całości do nowego folderu projektu. Nie kasuj starego folderu, zanim nie sprawdzisz danych w nowej aplikacji.
+5. W Terminalu uruchom:
+
+   ```sh
+   cd ~/Documents/GitHub/Portal-Babygym
+   npm ci
+   npm run dev
+   ```
+
+6. Otwórz `http://localhost:3000` w przeglądarce na tym Macu.
+
+Późniejsze aktualizacje: zatrzymaj serwer, zrób kopię `data/`, kliknij Fetch origin i, jeśli są zmiany, Pull origin w GitHub Desktop. Następnie uruchom ponownie `npm ci` i `npm run dev`. Jeśli sam edytowałeś pliki kodu, zachowaj te zmiany przed aktualizacją; nie nadpisuj ich ani nie używaj force/reset.
+
+GitHub synchronizuje kod. Baza i logo pozostają lokalnie w ignorowanym `data/` — nie są przenoszone pomiędzy komputerami przez GitHub Desktop.

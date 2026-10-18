@@ -1,9 +1,10 @@
 import http from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { calculateCharge, warsawNow } from './billing.js';
 import { generateSchedule, validDate, isExcluded } from './schedule.js';
 mkdirSync('data', { recursive: true });
+const logoPath = process.env.LOGO_PATH || 'data/logo';
 const db = new DatabaseSync(process.env.DB_PATH || 'data/evolution.sqlite');
 db.exec(`PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS groups(id INTEGER PRIMARY KEY, location TEXT NOT NULL, name TEXT NOT NULL, capacity INTEGER NOT NULL, price INTEGER NOT NULL, trial_price INTEGER NOT NULL, trials INTEGER NOT NULL);
@@ -17,6 +18,8 @@ for(const [table,column,type] of [['groups','start_date','TEXT'],['groups','end_
 }
 db.exec(`CREATE TABLE IF NOT EXISTS exclusions(id INTEGER PRIMARY KEY, start_date TEXT NOT NULL, end_date TEXT NOT NULL, scope TEXT NOT NULL, location TEXT, group_id INTEGER REFERENCES groups(id), reason TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS enrollment_sessions(enrollment_id INTEGER REFERENCES enrollments(id), session_id INTEGER REFERENCES sessions(id), price INTEGER NOT NULL, PRIMARY KEY(enrollment_id,session_id));`);
+db.exec(`CREATE TABLE IF NOT EXISTS trainers(id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS group_trainers(group_id INTEGER NOT NULL REFERENCES groups(id), trainer_id INTEGER NOT NULL REFERENCES trainers(id), PRIMARY KEY(group_id,trainer_id));`);
 function sessionsWithStatus() {
  const groups=all('SELECT * FROM groups'), exclusions=all('SELECT * FROM exclusions');
  return all('SELECT * FROM sessions ORDER BY starts_at').map(s=>({...s,excluded:isExcluded(s,groups.find(g=>g.id===s.group_id),exclusions)}));
@@ -42,6 +45,18 @@ function reconcileExclusions(before,reason) {
 const text = (v, label) => { if (typeof v !== 'string' || !v.trim() || v.length > 200) throw Error(`Uzupełnij pole: ${label}`); return v.trim(); };
 const integer = (v, min, max) => { if (!Number.isSafeInteger(v) || v < min || v > max) throw Error('Nieprawidłowa kwota lub liczba miejsc.'); return v; };
 function group(id) { const g = db.prepare('SELECT * FROM groups WHERE id=?').get(Number(id)); if (!g) throw Error('Nie znaleziono grupy.'); return g; }
+function trainerIds(value=[]) {
+ if(!Array.isArray(value)||value.length>100) throw Error('Wybierz trenerów z listy.');
+ return [...new Set(value)].map(id=>{
+  integer(id,1,Number.MAX_SAFE_INTEGER);
+  if(!db.prepare('SELECT id FROM trainers WHERE id=?').get(id)) throw Error('Nie znaleziono trenera.');
+  return id;
+ });
+}
+function assignTrainers(groupId,ids) {
+ db.prepare('DELETE FROM group_trainers WHERE group_id=?').run(groupId);
+ for(const id of ids) db.prepare('INSERT INTO group_trainers VALUES(?,?)').run(groupId,id);
+}
 function quote(b) {
  const g = group(b.group_id);
  if (!/^\d{4}-\d{2}$/.test(b.month)) throw Error('Wybierz miesiąc.');
@@ -57,13 +72,43 @@ const server = http.createServer(async (req,res) => {
  const url = new URL(req.url, 'http://localhost');
  const send = (status, data) => { res.writeHead(status, {'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(data)); };
  try {
-  if (req.method === 'GET' && url.pathname === '/api/state') return send(200, {groups:all('SELECT * FROM groups'), sessions:sessionsWithStatus(), exclusions:all('SELECT * FROM exclusions ORDER BY start_date'), enrollments:all(`SELECT e.*, g.name AS group_name, g.location, e.amount + COALESCE((SELECT SUM(a.amount) FROM adjustments a WHERE a.enrollment_id=e.id),0) AS balance FROM enrollments e JOIN groups g ON g.id=e.group_id ORDER BY e.id DESC`), adjustments:all('SELECT * FROM adjustments ORDER BY id DESC'), now:warsawNow()});
+  if (req.method === 'GET' && url.pathname === '/api/state') return send(200, {trainers:all('SELECT * FROM trainers ORDER BY name COLLATE NOCASE'), group_trainers:all('SELECT * FROM group_trainers'), logo:existsSync(logoPath)?'/logo?v='+Date.now():null, groups:all('SELECT * FROM groups'), sessions:sessionsWithStatus(), exclusions:all('SELECT * FROM exclusions ORDER BY start_date'), enrollments:all(`SELECT e.*, g.name AS group_name, g.location, e.amount + COALESCE((SELECT SUM(a.amount) FROM adjustments a WHERE a.enrollment_id=e.id),0) AS balance FROM enrollments e JOIN groups g ON g.id=e.group_id ORDER BY e.id DESC`), adjustments:all('SELECT * FROM adjustments ORDER BY id DESC'), now:warsawNow()});
+  if(req.method==='GET'&&url.pathname==='/logo') {
+   if(!existsSync(logoPath)) return send(404,{error:'Nie dodano logo.'});
+   const logo=readFileSync(logoPath);
+   res.writeHead(200,{'Content-Type':logo[0]===137?'image/png':logo[0]===255?'image/jpeg':'image/webp','X-Content-Type-Options':'nosniff','Cache-Control':'no-cache'});return res.end(logo);
+  }
+  if(req.method==='POST'&&url.pathname==='/api/logo') {
+   const chunks=[];let size=0;
+   for await(const chunk of req){size+=chunk.length;if(size>5*1024*1024) throw Error('Logo może mieć maksymalnie 5 MB.');chunks.push(chunk);}
+   const bytes=Buffer.concat(chunks);
+   const png=bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]));
+   const jpeg=bytes[0]===255&&bytes[1]===216&&bytes[2]===255;
+   const webp=bytes.subarray(0,4).toString()==='RIFF'&&bytes.subarray(8,12).toString()==='WEBP';
+   if(!png&&!jpeg&&!webp) throw Error('Wybierz plik PNG, JPG lub WebP.');
+   writeFileSync(logoPath,bytes);return send(201,{ok:true});
+  }
   if (req.method === 'POST' && url.pathname.startsWith('/api/')) {
    let raw=''; for await (const chunk of req) {raw+=chunk; if(raw.length>50000) throw Error('Zbyt duże żądanie.');}
    const b=JSON.parse(raw);
+   if(url.pathname==='/api/trainers') {
+    const name=text(b.name,'imię i nazwisko trenera');
+    const email=b.email?text(b.email,'email'):'';
+    const phone=b.phone?text(b.phone,'telefon'):'';
+    if(email&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw Error('Podaj poprawny email trenera.');
+    const id=Number(db.prepare('INSERT INTO trainers(name,email,phone) VALUES(?,?,?)').run(name,email,phone).lastInsertRowid);
+    return send(201,{id});
+   }
+   if(url.pathname==='/api/groups/trainers') {
+    const g=group(b.group_id),ids=trainerIds(b.trainer_ids);
+    db.exec('BEGIN IMMEDIATE');
+    try{assignTrainers(g.id,ids);db.exec('COMMIT');return send(200,{ok:true});}
+    catch(e){db.exec('ROLLBACK');throw e;}
+   }
    if(url.pathname==='/api/groups') {
     const location=text(b.location,'lokalizacja'), name=text(b.name,'grupa');
     const price=integer(b.price,0,10000000), capacity=integer(b.capacity,1,500), trialPrice=integer(b.trial_price,0,10000000);
+    const assigned=trainerIds(b.trainer_ids);
     let terms;
     if(b.start_date!==undefined) terms=generateSchedule(b);
     else {
@@ -76,6 +121,7 @@ const server = http.createServer(async (req,res) => {
     db.exec('BEGIN');
     try {
      const id=Number(db.prepare('INSERT INTO groups(location,name,capacity,price,trial_price,trials) VALUES(?,?,?,?,?,?)').run(location,name,capacity,price,trialPrice,b.trials?1:0).lastInsertRowid);
+     assignTrainers(id,assigned);
      db.prepare('UPDATE groups SET start_date=?,end_date=?,start_time=?,end_time=?,weekday=? WHERE id=?').run(b.start_date||null,b.end_date||null,b.start_time||null,b.end_time||null,b.weekday??null,id);
      for(const term of terms) db.prepare('INSERT INTO sessions(group_id,starts_at,ends_at,price) VALUES(?,?,?,?)').run(id,term.starts_at,term.ends_at,price);
      db.exec('COMMIT'); return send(201,{id,count:terms.length});

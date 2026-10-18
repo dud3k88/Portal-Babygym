@@ -1,6 +1,6 @@
 import json, os, subprocess, tempfile, time, urllib.request, urllib.error
 with tempfile.TemporaryDirectory() as directory:
- env={**os.environ,'PORT':'3107','DB_PATH':directory+'/test.sqlite'}
+ env={**os.environ,'PORT':'3107','DB_PATH':directory+'/test.sqlite','LOGO_PATH':directory+'/logo'}
  def start():
   p=subprocess.Popen(['node','server.js'],env=env,stdout=subprocess.DEVNULL)
   for _ in range(50):
@@ -44,6 +44,33 @@ with tempfile.TemporaryDirectory() as directory:
   except urllib.error.HTTPError as error:assert error.code==400
   else:raise AssertionError('capacity not enforced')
 
+  # Trainer profiles and many-to-many assignments, with atomic validation.
+  coach=request('/api/trainers',{'name':'Anna Kowalska','email':'anna@example.org','phone':'123456789'})['id']
+  coach2=request('/api/trainers',{'name':'Jan Testowy'})['id']
+  request('/api/groups/trainers',{'group_id':group['id'],'trainer_ids':[coach,coach2,coach]})
+  assignments=request('/api/state')['group_trainers']
+  assert len(assignments)==2
+  try:request('/api/groups/trainers',{'group_id':group['id'],'trainer_ids':[coach,999999]})
+  except urllib.error.HTTPError as error:assert error.code==400
+  else:raise AssertionError('nonexistent trainer accepted')
+  assert request('/api/state')['group_trainers']==assignments
+  request('/api/groups/trainers',{'group_id':group['id'],'trainer_ids':[]})
+  assert request('/api/state')['group_trainers']==[]
+  try:request('/api/trainers',{'name':'Błędny email','email':'invalid'})
+  except urllib.error.HTTPError as error:assert error.code==400
+  else:raise AssertionError('invalid email accepted')
+  coached=request('/api/groups',{'location':'Trenerzy','name':'Grupa z trenerem','capacity':5,'price':5000,'trial_price':0,'trials':False,'dates':['2099-10-01T13:00'],'trainer_ids':[coach]})['id']
+  assert {'group_id':coached,'trainer_id':coach} in request('/api/state')['group_trainers']
+  # Logo rejects script/HTML uploads and preserves an original PNG as bytes.
+  bad=urllib.request.Request('http://127.0.0.1:3107/api/logo',data=b'<svg onload="alert(1)"></svg>',method='POST')
+  try:urllib.request.urlopen(bad)
+  except urllib.error.HTTPError as error:assert error.code==400
+  else:raise AssertionError('SVG was accepted')
+  import base64
+  png=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=')
+  upload=urllib.request.Request('http://127.0.0.1:3107/api/logo',data=png,method='POST')
+  with urllib.request.urlopen(upload) as r:assert r.status==201
+  with urllib.request.urlopen('http://127.0.0.1:3107/logo') as r:assert r.read()==png
   # Weekly groups, all three exclusion scopes, overlaps and invoice corrections.
   import datetime
   weekday=(datetime.date(2099,9,1).weekday()+1)%7
@@ -97,5 +124,7 @@ with tempfile.TemporaryDirectory() as directory:
  try:
   assert next(e for e in request('/api/state')['enrollments'] if e['id']==enrollment['id'])['balance']==5000
   assert balance()==19000
+  assert {'group_id':coached,'trainer_id':coach} in request('/api/state')['group_trainers']
+  with urllib.request.urlopen('http://127.0.0.1:3107/logo') as r:assert r.read()==png
  finally:p.terminate();p.wait()
- print('PASS: zapis, grafik tygodniowy, wszystkie zakresy wykluczeń, nakładanie, cofanie, korekty, próby, walidacja atomowa i restart')
+ print('PASS: zapisy, grafik, wykluczenia, korekty, trenerzy, przypisania, logo, migracja i trwałość po restarcie')
