@@ -34,6 +34,7 @@
       <button data-view="settings"><svg><use href="#i-settings"/></svg>Wygląd</button>
       <p class="nav-label second">PANEL RODZICA</p>
       <button data-view="parent"><svg><use href="#i-arrow"/></svg>Zapisy na zajęcia</button>
+      <button data-view="children"><svg><use href="#i-users"/></svg>Moje dzieci</button>
     </nav>
     <div class="sidebar-footer"><span class="test-dot"></span> Wersja deweloperska<small>Korzystaj z fikcyjnych danych</small></div>
   </aside>
@@ -51,7 +52,7 @@
     </section>
 
     <section id="groups" class="page" aria-labelledby="groups-title">
-      <div class="page-heading"><div><p class="eyebrow">ORGANIZACJA ZAJĘĆ</p><h1 id="groups-title">Grupy zajęciowe<span>.</span></h1><p>Grafik, lokalizacje i prowadzący. Wszystko w jednym miejscu.</p></div><button class="primary" data-open="group-dialog"><span>＋</span> Dodaj grupę</button></div>
+      <div class="page-heading"><div><p class="eyebrow">ORGANIZACJA ZAJĘĆ</p><h1 id="groups-title">Grupy zajęciowe<span>.</span></h1><p>Lokalizacje, grupy i zapisani zawodnicy.</p></div><button class="primary" data-open="group-dialog"><span>＋</span> Dodaj grupę</button></div>
       <div class="summary-grid" id="group-stats"></div>
       <article class="section-card"><div class="section-toolbar"><div><h2>Twoje grupy</h2><p class="hint">Terminy i opłaty w wybranym miesiącu</p></div><label class="month-filter">Miesiąc podglądu<input type="month" id="calendar-month" required></label></div><div id="group-location-path"></div><div id="calendar" class="group-grid"></div></article>
     </section>
@@ -83,10 +84,16 @@
     </section>
 
     <section id="parent" class="page" aria-labelledby="parent-title" hidden>
-      <div class="page-heading"><div><p class="eyebrow">MAŁE KROKI. WIELKI ROZWÓJ.</p><h1 id="parent-title">Moje dzieci<span>.</span></h1><p>Grupy, terminy zajęć i należności Twojej rodziny.</p></div><button class="primary" data-new-athlete>＋ Dodaj dziecko</button></div><div id="my-children" class="children-grid"></div>
-      <div class="parent-grid"><article class="section-card"><h2>Zapisz dziecko do grupy</h2><form id="enroll"><label>Dziecko<select name="athlete_id" id="enrollment-athlete" required></select></label><label>Lokalizacja<select id="location" required></select></label><label>Grupa<select id="group" name="group_id" required></select></label><div id="group-info" class="hint"></div><label>Miesiąc<input type="month" name="month" required></label><div id="monthly-sessions" class="hint"></div><label>Rodzaj zapisu<select name="trial_id" id="trial"><option value="">Zapis stały</option></select></label><div id="quote" class="total">Wybierz grupę i miesiąc</div><button class="primary" type="submit">Potwierdź zapis <svg><use href="#i-arrow"/></svg></button><p class="hint">Wersja testowa. Zapis nie pobiera płatności.</p></form></article><article class="parent-note"><p class="eyebrow">JASNE ZASADY</p><h2>Rozwój w dobrym rytmie.</h2><div class="rule"><b>01</b><div><h3>Blisko Was</h3><p>Grupy prowadzone w przedszkolu Twojego dziecka.</p></div></div><div class="rule"><b>02</b><div><h3>Tylko przyszłe zajęcia</h3><p>Zapisujesz się w trakcie miesiąca? Nie naliczamy minionych terminów ani dni wolnych.</p></div></div><div class="rule"><b>03</b><div><h3>Możliwość próby</h3><p>Jeśli grupa oferuje zajęcia próbne, wybierzesz termin i od razu zobaczysz cenę.</p></div></div></article></div>
+      <div class="page-heading"><h1 id="parent-title">Zapisy na zajęcia<span>.</span></h1></div>
+      <article class="section-card registration-card"><label class="registration-location">Lokalizacja<select id="location" required><option value="">Wybierz lokalizację</option></select></label><div id="available-groups" class="registration-groups" aria-live="polite"></div></article>
+    </section>
+    <section id="children" class="page" aria-labelledby="children-title" hidden>
+      <div class="page-heading"><h1 id="children-title">Moje dzieci<span>.</span></h1><button class="primary" data-new-athlete>＋ Dodaj dziecko</button></div>
+      <div id="my-children" class="children-grid"></div>
     </section>
   </main>
+
+  <dialog id="enrollment-dialog" aria-labelledby="enrollment-title"><div class="dialog-heading"><h2 id="enrollment-title">Zapisz dziecko</h2><button type="button" data-close aria-label="Zamknij">×</button></div><form id="enroll"><input type="hidden" name="group_id" id="group"><div id="group-info" class="registration-summary"></div><label>Dziecko<select name="athlete_id" id="enrollment-athlete" required></select></label><button type="button" class="tertiary add-child-link" data-new-athlete>＋ Dodaj dziecko</button><label>Miesiąc<input type="month" name="month" required></label><label id="trial-label">Rodzaj zapisu<select name="trial_id" id="trial"><option value="">Zapis stały</option></select></label><details><summary>Terminy zajęć</summary><div id="monthly-sessions" class="hint"></div></details><div id="quote" class="total" aria-live="polite"></div><button class="primary" type="submit">Potwierdź zapis</button></form></dialog>
 
   <dialog id="location-dialog" aria-labelledby="location-dialog-title"><div class="dialog-heading"><div><p class="eyebrow">MIEJSCA ZAJĘĆ</p><h2 id="location-dialog-title">Nowa lokalizacja</h2></div><button type="button" data-close aria-label="Zamknij">×</button></div><form id="save-location"><input type="hidden" name="id"><label>Nazwa lokalizacji<input name="name" placeholder="Przedszkole Ekologiczne" required maxlength="200" autocomplete="off"></label><p class="hint">Nazwy nie mogą się powtarzać. Zmiana nazwy zaktualizuje ją również w grupach i dniach wolnych.</p><div class="dialog-actions"><button type="button" class="secondary" data-close>Anuluj</button><button class="primary" type="submit">Zapisz lokalizację</button></div></form></dialog>
 

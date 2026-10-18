@@ -2,11 +2,13 @@ let state;
 let authInfo = { user: null, needs_setup: false };
 let authMode = 'login';
 let selectedGroupLocation = null;
+let selectedAdminGroup = null;
+let dialogOrder = [];
 const $ = selector => document.querySelector(selector);
 const money = value => new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' }).format(value / 100);
 const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const dayNames = ['niedziela', 'poniedziałek', 'wtorek', 'środa', 'czwartek', 'piątek', 'sobota'];
-const viewNames = { auth: 'Logowanie', athletes: 'Zawodnicy', groups: 'Grupy', locations: 'Lokalizacje', 'days-off': 'Dni wolne', trainers: 'Trenerzy', billing: 'Rozliczenia', settings: 'Wygląd', parent: 'Zapisy na zajęcia' };
+const viewNames = { auth: 'Logowanie', athletes: 'Zawodnicy', groups: 'Grupy', locations: 'Lokalizacje', 'days-off': 'Dni wolne', trainers: 'Trenerzy', billing: 'Rozliczenia', settings: 'Wygląd', parent: 'Zapisy na zajęcia', children: 'Moje dzieci' };
 let toastTimer;
 
 async function api(path, body) {
@@ -25,7 +27,7 @@ function notice(message, error = false) {
     element.hidden = false;
     element.classList.toggle('error', error);
   }
-  const dialog = document.querySelector('dialog[open]');
+  const dialog = [...dialogOrder].reverse().map(id=>document.getElementById(id)).find(element=>element.open);
   if (dialog) {
     let feedback = dialog.querySelector('.form-message');
     if (!feedback) {
@@ -42,12 +44,12 @@ function notice(message, error = false) {
 
 function switchView(view) {
   if (!authInfo.user) view = 'auth';
-  else if (authInfo.user.role === 'parent') view = 'parent';
+  else if (authInfo.user.role === 'parent' && !['parent','children'].includes(view)) view = 'parent';
   else if (!viewNames[view] || view === 'auth') view = 'groups';
   $('nav').hidden = !authInfo.user;
   $('#logout').hidden = !authInfo.user;
   $('#account-name').textContent = authInfo.user?.name || '';
-  for (const button of document.querySelectorAll('nav [data-view]')) button.hidden = authInfo.user?.role === 'parent' && button.dataset.view !== 'parent';
+  for (const button of document.querySelectorAll('nav [data-view]')) button.hidden = authInfo.user?.role === 'parent' && !['parent','children'].includes(button.dataset.view);
   for (const label of document.querySelectorAll('nav .nav-label')) label.hidden = authInfo.user?.role === 'parent' && !label.classList.contains('second');
   for (const section of document.querySelectorAll('main > .page')) section.hidden = section.id !== view;
   for (const button of document.querySelectorAll('nav [data-view]')) {
@@ -56,8 +58,8 @@ function switchView(view) {
     if (active) button.setAttribute('aria-current', 'page');
     else button.removeAttribute('aria-current');
   }
-  $('#breadcrumb').textContent = view === 'parent' && authInfo.user?.role === 'parent' ? 'Moje dzieci' : viewNames[view];
-  $('nav [data-view="parent"]').innerHTML = '<svg><use href="#i-arrow"/></svg>' + (authInfo.user?.role === 'parent' ? 'Moje dzieci' : 'Zapisy na zajęcia');
+  $('#breadcrumb').textContent = viewNames[view];
+  $('nav [data-view="parent"]').innerHTML = '<svg><use href="#i-arrow"/></svg>' + 'Zapisy na zajęcia';
   $('.workspace-label').innerHTML = '<span class="workspace-dot"></span> ' + (!authInfo.user ? 'Evolution Academy' : authInfo.user.role === 'parent' ? 'Panel rodzica' : 'Panel administratora');
   $('#notice').hidden = true;
 }
@@ -66,6 +68,8 @@ function openDialog(id) {
   const dialog = document.getElementById(id);
   dialog.querySelector('.form-message')?.remove();
   dialog.showModal();
+  dialogOrder = dialogOrder.filter(entry=>entry!==id&&document.getElementById(entry).open);
+  dialogOrder.push(id);
 }
 
 function selectedIds(container) {
@@ -137,9 +141,9 @@ async function refresh() {
 }
 
 function updateGroups() {
-  const previous = $('#group').value;
-  $('#group').innerHTML = '<option value="">Wybierz grupę</option>' + state.groups.filter(g => g.location_id === Number($('#location').value)).map(g => `<option value="${g.id}">${escape(g.name)}</option>`).join('');
-  $('#group').value = previous;
+  const group = state.groups.find(entry => entry.id === Number($('#group').value));
+  if (!group || group.location_id !== Number($('#location').value)) $('#group').value = '';
+  renderRegistrationGroups();
   updateTrials();
 }
 
@@ -150,7 +154,8 @@ function updateTrials() {
   $('#trial').innerHTML = '<option value="">Zapis stały</option>' + (group?.trials ? state.sessions.filter(s => s.group_id === group.id && s.starts_at.startsWith(month) && s.starts_at >= state.now && !s.excluded).map(s => `<option value="${s.id}">Próba ${escape(termLabel(s))} · ${money(group.trial_price)}</option>`).join('') : '');
   $('#trial').value = previous;
   if (!$('#trial').value) $('#trial').value = '';
-  $('#group-info').textContent = group ? `${money(group.price)} / zajęcia · limit ${group.capacity} miejsc · czas polski` : '';
+  $('#trial-label').hidden = !group?.trials;
+  $('#group-info').innerHTML = group ? `<strong>${escape(group.name)}</strong><span>${escape(group.location)}</span><span>${escape(scheduleLabel(group))}</span><span>Trener: ${escape(trainersFor(group.id).map(trainer=>trainer.name).join(', ') || 'Nie przypisano')}</span>` : '';
   renderMonthlySessions();
   updateQuote();
 }
@@ -158,10 +163,12 @@ function updateTrials() {
 let quoteVersion = 0;
 async function updateQuote() {
   const version = ++quoteVersion;
+  const submit=$('#enroll [type="submit"]');
+  submit.disabled=true;
   if (!$('#group').value) { $('#quote').textContent = 'Wybierz grupę i miesiąc'; return; }
   try {
     const quote = await api('quote', enrollmentBody());
-    if (version === quoteVersion) $('#quote').textContent = `${quote.count} ${$('#trial').value ? 'zajęcia próbne' : 'zajęcia'} · ${money(quote.amount)}`;
+    if (version === quoteVersion) { submit.disabled=false; $('#quote').textContent = `${quote.count} ${$('#trial').value ? 'zajęcia próbne' : 'zajęcia'} · ${money(quote.amount)}`; }
   } catch (error) {
     if (version === quoteVersion) $('#quote').textContent = error.message;
   }
@@ -190,27 +197,65 @@ function renderMonthlySessions() {
   $('#monthly-sessions').innerHTML = groupId ? sessions.map(s => termMarkup(s, true)).join('') || 'Brak zajęć w wybranym miesiącu.' : '';
 }
 
+function scheduleLabel(group) {
+  if(group.weekday!==null) return `${dayNames[group.weekday]} · ${group.start_time}–${group.end_time}`;
+  const next=state.sessions.find(session=>session.group_id===group.id&&!session.cancelled&&session.starts_at>=state.now);
+  return next ? termLabel(next) : 'Brak przyszłych terminów';
+}
+
 function renderCalendar() {
-  const month = $('#calendar-month').value;
-  const stats = [['Grupy zajęciowe',state.groups.length,'Wszystkie utworzone grupy','groups'],['Lokalizacje',state.locations.length,'Przedszkola i miejsca zajęć','location'],['Zawodnicy',state.athletes.length,'Zarejestrowane kartoteki','users']];
-  $('#group-stats').innerHTML = stats.map(([label,count,description,icon])=>`<div class="stat"><span class="stat-label">${label}</span><strong>${count}</strong><small>${description}</small><span class="stat-icon"><svg><use href="#i-${icon}"/></svg></span></div>`).join('');
-  const location = state.locations.find(entry=>entry.id===selectedGroupLocation);
-  $('#group-location-path').innerHTML = location ? `<div class="location-path"><button class="tertiary" data-back-locations>← Wszystkie lokalizacje</button><span>/ ${escape(location.name)}</span></div>` : '';
+  const month=$('#calendar-month').value;
+  const stats=[['Grupy',state.groups.length,'groups'],['Lokalizacje',state.locations.length,'location'],['Zawodnicy',state.athletes.length,'users']];
+  $('#group-stats').innerHTML=stats.map(([label,count,icon])=>`<div class="stat"><span class="stat-label">${label}</span><strong>${count}</strong><span class="stat-icon"><svg><use href="#i-${icon}"/></svg></span></div>`).join('');
+  const location=state.locations.find(entry=>entry.id===selectedGroupLocation);
+  const group=state.groups.find(entry=>entry.id===selectedAdminGroup&&entry.location_id===location?.id);
+  $('#group-stats').hidden=Boolean(location);
+  $('#groups .section-toolbar h2').textContent=group?'Szczegóły grupy':location?'Grupy':'Lokalizacje';
+  $('#groups .section-toolbar .hint').hidden=!group;
+  $('#calendar-month').closest('label').hidden=!group;
+  $('#group-location-path').innerHTML=location?`<div class="location-path"><button class="tertiary" data-back-locations>← Lokalizacje</button><span>/</span>${group?`<button class="tertiary" data-back-groups>${escape(location.name)}</button><span>/ ${escape(group.name)}</span>`:`<span>${escape(location.name)}</span>`}</div>`:'';
+  $('#calendar').className=location?'admin-group-list':'location-list';
   if(!location) {
-    $('#calendar').innerHTML = state.locations.map(entry=>{
-      const groups=state.groups.filter(group=>group.location_id===entry.id);
-      const athleteIds=new Set(state.memberships.filter(member=>groups.some(group=>group.id===member.group_id)).map(member=>member.athlete_id));
-      return `<article class="location-card"><div class="avatar"><svg><use href="#i-location"/></svg></div><h3>${escape(entry.name)}</h3><p>${groups.length} grup · ${athleteIds.size} zawodników</p><button class="secondary" data-location-groups="${entry.id}">Przejdź do grup →</button></article>`;
-    }).join('') || emptyState('location','Zacznij od lokalizacji','Dodaj przedszkole, a następnie utwórz w nim grupy.','<button class="secondary" data-view="locations">Dodaj lokalizację</button>');
+    $('#calendar').innerHTML=state.locations.map(entry=>{
+      const groups=state.groups.filter(candidate=>candidate.location_id===entry.id);
+      return `<button class="admin-list-row" data-location-groups="${entry.id}"><span class="list-row-title">${escape(entry.name)}<small>${groups.length} grup</small></span><span class="list-enter">Zobacz grupy →</span></button>`;
+    }).join('')||emptyState('location','Brak lokalizacji','','<button class="secondary" data-view="locations">Dodaj lokalizację</button>');
     return;
   }
-  $('#calendar').innerHTML = state.groups.filter(group=>group.location_id===location.id).map(group=>{
-    const sessions=state.sessions.filter(session=>session.group_id===group.id&&session.starts_at.startsWith(month)&&!session.cancelled);
-    const active=sessions.filter(session=>!session.excluded);
-    const trainers=trainersFor(group.id);
-    const schedule=group.weekday!==null?`${dayNames[group.weekday]} · ${group.start_time}–${group.end_time}`:'Grafik z poprzedniej wersji';
-    return `<div class="group-card"><div class="group-card-top"><p class="group-location">${escape(group.location)}</p><div class="group-title"><h3>${escape(group.name)}</h3><span class="pill">${group.member_count} / ${group.capacity} miejsc</span></div><p class="group-schedule">${escape(schedule)}<br>${money(group.price)} / zajęcia</p><div class="group-metrics"><div><strong>${active.length} zajęć</strong><span>W WYBRANYM MIESIĄCU</span></div><div><strong>${money(active.reduce((sum,session)=>sum+session.price,0))}</strong><span>ZA PEŁNY MIESIĄC</span></div></div><div class="group-trainers"><span>${trainers.length?escape(trainers.map(trainer=>trainer.name).join(', ')):'Brak przypisanego trenera'}</span><button class="tertiary" data-assign="${group.id}">Zmień trenerów</button></div><div class="group-actions"><button class="secondary" data-roster="${group.id}">Zawodnicy (${group.member_count})</button><button class="secondary" data-edit-group="${group.id}">Edytuj grupę</button></div></div><details><summary>Terminy zajęć (${sessions.length})</summary><div class="session-list">${sessions.map(session=>termMarkup(session)).join('')||'<p class="hint">Brak terminów w tym miesiącu.</p>'}</div></details></div>`;
-  }).join('') || emptyState('groups','Brak grup w tej lokalizacji','Utwórz pierwszą grupę i jej grafik.','<button class="secondary" data-open="group-dialog">Dodaj grupę</button>');
+  if(!group) {
+    $('#calendar').innerHTML=state.groups.filter(entry=>entry.location_id===location.id).map(entry=>{
+      const trainer=trainersFor(entry.id).map(person=>person.name).join(', ')||'Nie przypisano trenera';
+      return `<button class="admin-list-row" data-enter-group="${entry.id}"><span class="list-row-title">${escape(entry.name)}<small>${escape(scheduleLabel(entry))}</small><small>Trener: ${escape(trainer)}</small></span><span class="list-occupancy"><strong>${entry.member_count} / ${entry.capacity}</strong><small>zapisanych zawodników</small></span><span class="list-enter">Wejdź →</span></button>`;
+    }).join('')||emptyState('groups','Brak grup','','<button class="secondary" data-open="group-dialog">Dodaj grupę</button>');
+    return;
+  }
+  const sessions=state.sessions.filter(session=>session.group_id===group.id&&session.starts_at.startsWith(month)&&!session.cancelled);
+  const active=sessions.filter(session=>!session.excluded);
+  const members=state.memberships.filter(member=>member.group_id===group.id);
+  $('#calendar').innerHTML=`<div class="admin-group-detail"><div class="group-detail-heading"><div><h2>${escape(group.name)}</h2><p>${escape(scheduleLabel(group))}</p><p>Trener: ${escape(trainersFor(group.id).map(person=>person.name).join(', ')||'Nie przypisano')}</p></div><button class="secondary" data-edit-group="${group.id}">Edytuj ustawienia</button></div><div class="detail-facts"><span><strong>${group.member_count} / ${group.capacity}</strong> zapisanych</span><span><strong>${money(group.price)}</strong> / zajęcia</span><span><strong>${active.length}</strong> zajęć w miesiącu</span><span><strong>${money(active.reduce((sum,session)=>sum+session.price,0))}</strong> za pełny miesiąc</span></div><h3>Zawodnicy</h3><div class="detail-roster">${members.map(member=>rosterRow(state.athletes.find(athlete=>athlete.id===member.athlete_id))).join('')||'<p class="hint">Brak zapisanych zawodników.</p>'}</div><h3>Terminy zajęć</h3><div>${sessions.map(session=>termMarkup(session)).join('')||'<p class="hint">Brak terminów w tym miesiącu.</p>'}</div></div>`;
+}
+
+function renderRegistrationGroups() {
+  const locationId=Number($('#location').value);
+  if(!locationId){$('#available-groups').innerHTML='';return;}
+  const groups=state.groups.filter(group=>group.location_id===locationId);
+  $('#available-groups').innerHTML=groups.map(group=>{
+    const free=Math.max(0,group.capacity-group.member_count);
+    const next=state.sessions.find(session=>session.group_id===group.id&&!session.excluded&&session.starts_at>=state.now);
+    const ownMember=state.memberships.some(member=>member.group_id===group.id&&state.athletes.some(athlete=>athlete.id===member.athlete_id));
+    const eligible=Boolean(next)&&(free>0||ownMember);
+    return `<div class="registration-group"><div class="registration-group-main"><h2>${escape(group.name)}</h2><p>${escape(scheduleLabel(group))}</p><p>Trener: ${escape(trainersFor(group.id).map(trainer=>trainer.name).join(', ')||'Nie przypisano')}</p>${next?`<p class="hint">Najbliższe zajęcia: ${escape(termLabel(next))}</p>`:''}<p>${money(group.price)} / zajęcia</p></div><div class="registration-group-action"><span class="availability ${free===0?'full':''}">Wolne miejsca: ${free} / ${group.capacity}</span><button class="primary" data-register-group="${group.id}" ${eligible?'':'disabled'}>${!next?'Zapisy zakończone':free===0&&!ownMember?'Brak miejsc':'Zapisz dziecko'}</button></div></div>`;
+  }).join('')||'<p class="hint">W tej lokalizacji nie ma jeszcze grup.</p>';
+}
+
+function openEnrollment(groupId) {
+  const group=state.groups.find(entry=>entry.id===groupId);
+  $('#group').value=groupId;
+  const future=state.sessions.filter(session=>session.group_id===groupId&&!session.excluded&&session.starts_at>=state.now);
+  const month=$('[name="month"]').value;
+  if(!future.some(session=>session.starts_at.startsWith(month))) $('[name="month"]').value=future[0]?.starts_at.slice(0,7)||state.now.slice(0,7);
+  updateTrials();
+  openDialog('enrollment-dialog');
 }
 
 function renderTrainers() {
@@ -257,8 +302,11 @@ document.addEventListener('click', event => {
   }
   if (button.dataset.open) button.dataset.open === 'group-dialog' ? openGroup() : openDialog(button.dataset.open);
   if (button.dataset.editGroup) openGroup(Number(button.dataset.editGroup));
-  if (button.dataset.locationGroups) { selectedGroupLocation=Number(button.dataset.locationGroups); window.location.hash='groups'; renderCalendar(); }
-  if (button.hasAttribute('data-back-locations')) {selectedGroupLocation=null;renderCalendar();}
+  if (button.dataset.locationGroups) { selectedGroupLocation=Number(button.dataset.locationGroups); selectedAdminGroup=null; window.location.hash='groups'; renderCalendar(); }
+  if (button.hasAttribute('data-back-locations')) {selectedGroupLocation=null;selectedAdminGroup=null;renderCalendar();}
+  if(button.hasAttribute('data-back-groups')){selectedAdminGroup=null;renderCalendar();}
+  if(button.dataset.enterGroup){selectedAdminGroup=Number(button.dataset.enterGroup);renderCalendar();}
+  if(button.dataset.registerGroup)openEnrollment(Number(button.dataset.registerGroup));
   if (button.dataset.roster) openRoster(Number(button.dataset.roster));
   if (button.dataset.athlete) openAthleteDetail(Number(button.dataset.athlete));
   if (button.hasAttribute('data-new-athlete')) openAthlete();
@@ -268,7 +316,7 @@ document.addEventListener('click', event => {
     for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
     window.location.hash = 'parent'; switchView('parent');
     $('#enrollment-athlete').value = button.dataset.enrollAthlete;
-    $('#enroll').scrollIntoView({behavior:'smooth',block:'center'});
+    $('#location').focus();
   }
   if (button.hasAttribute('data-close')) button.closest('dialog').close();
   if (button.dataset.assign) openAssignment(Number(button.dataset.assign));
@@ -346,10 +394,11 @@ $('#enroll').onsubmit = async event => {
   button.disabled = true;
   try {
     const result = await api('enrollments', enrollmentBody());
+    $('#enrollment-dialog').close();
     await refresh();
-    notice(`Zapis potwierdzony. Należność: ${money(result.amount)}. Płatności online nie są jeszcze podłączone.`);
+    notice(`Zapis potwierdzony. Należność: ${money(result.amount)}.`);
   } catch (error) { notice(error.message, true); }
-  finally { button.disabled = false; }
+  finally { updateQuote(); }
 };
 
 $('#enrollments').onclick = async event => {
@@ -516,7 +565,7 @@ function renderMyChildren() {
       const group=state.groups.find(entry=>entry.id===member.group_id);
       const terms=state.sessions.filter(session=>session.group_id===group.id&&session.starts_at>=state.now&&(!session.cancelled||member.trial_id===session.id)&&(!member.trial_id||session.id===member.trial_id)).slice(0,6);
       return `<div class="child-group"><h3>${escape(group.location)} / ${escape(group.name)}</h3><p class="hint">${member.status==='trial'?'Zajęcia próbne':'Zapis stały'}${group.start_time?' · '+escape(group.start_time)+'–'+escape(group.end_time):''}</p><p class="hint">Najbliższe terminy:</p>${terms.map(session=>termMarkup(session)).join('')||'<p class="hint">Brak przyszłych terminów.</p>'}</div>`;
-    }).join('')||'<p>Dziecko nie jest jeszcze przypisane do grupy. Wybierz zajęcia w formularzu poniżej.</p>'}<button class="secondary" data-athlete="${athlete.id}">Kartoteka i rozliczenia</button></article>`;
+    }).join('')||'<p>Dziecko nie jest jeszcze przypisane do grupy. Wybierz zajęcia w zakładce „Zapisy na zajęcia”.</p>'}<button class="secondary" data-athlete="${athlete.id}">Kartoteka i rozliczenia</button></article>`;
   }).join('')||emptyState('users','Dodaj swoje dziecko','Najpierw dodaj dane dziecka, a potem wybierz lokalizację i grupę.');
 }
 

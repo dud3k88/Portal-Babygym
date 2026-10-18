@@ -26,7 +26,7 @@ Link z adresem localhost działa tylko na komputerze z serwerem. Wersja lokalna 
 
 ## Panel administratora
 
-- **Grupy:** najpierw wybierz lokalizację, potem grupę. Karta pokazuje liczbę zapisanych zawodników i limit, miesięczny grafik, stawkę i trenerów. Przycisk **Zawodnicy** otwiera listę dzieci wraz z rodzicami i odsyła do kartotek. Liczebność wynika ze stałych przypisań, a nie z liczby miesięcznych naliczeń.
+- **Grupy:** najpierw wybierz lokalizację, potem grupę. Grupy są wyświetlane jedna pod drugą. Wiersz pokazuje termin, prowadzącego i liczbę zapisanych osób względem limitu. Przycisk **Wejdź** otwiera osobny widok grupy z zawodnikami, harmonogramem, miesięczną opłatą i przyciskiem edycji ustawień. Wybrany miesiąc dotyczy szczegółów harmonogramu, nie liczebności grupy. Liczebność wynika ze stałych przypisań, a nie z liczby miesięcznych naliczeń.
 - **Zawodnicy:** kartoteka w strukturze lokalizacja → grupa → dziecko, wyszukiwanie po dziecku lub rodzicu, dane dziecka, data urodzenia, kontakt do rodzica, notatka administracyjna, przypisania i historia rozliczeń. Dzieci bez grupy są widoczne osobno. Każdy zawodnik ma przypisanego rodzica; administrator może dodać profil rodzica przed dodaniem dziecka. Zmiana przypisanego rodzica przenosi dostęp do kartoteki i rozliczeń dziecka.
 - **Lokalizacje:** rejestr przedszkoli wybieranych z listy. Nazwy różniące się tylko wielkością liter lub dodatkowymi spacjami nie tworzą duplikatów. Poprawienie nazwy aktualizuje etykiety w całym systemie, zachowując identyfikatory i wykluczenia. Nie zgadujemy, czy różne literówki oznaczają jedno miejsce.
 - **Dni wolne:** dzień lub zakres dla całego systemu, wybranych lokalizacji albo grup. Lokalizacje mogą mieć dni wolne jeszcze przed utworzeniem grup. Święta dodaje administrator — nie są automatycznie importowane.
@@ -46,7 +46,9 @@ Zapis próbny dotyczy konkretnego terminu. Jeżeli termin zostanie odwołany, je
 
 Rodzic zakłada konto, dodaje dziecko i wybiera lokalizację oraz grupę. Nie wpisuje przy każdym zapisie ponownie danych rodzica i dziecka — wybiera własną kartotekę. Serwer sprawdza własność kartoteki niezależnie od interfejsu.
 
-Po zalogowaniu rodzic widzi tylko swoje dzieci, ich lokalizacje, grupy, najbliższe terminy, należności i historię korekt. Nie widzi innych rodzin ani notatek administracyjnych. Może poprawić dane swojego dziecka. Należność jest liczona z góry za pozostałe zajęcia wybranego miesiąca; minione, odwołane i wykluczone terminy nie są naliczane. Cena próby jest ustawiana w grupie, także na 0 zł.
+Strona **Zapisy na zajęcia** zawiera wyłącznie wybór lokalizacji i listę jej grup. Każdy wiersz pokazuje wolne miejsca, dzień i godziny zajęć, trenera, najbliższą datę i stawkę. Przycisk **Zapisz dziecko** otwiera formularz z wyborem własnego dziecka, miesiąca, ewentualnej próby i dynamiczną kwotą. Pełna grupa blokuje zapis nowej osoby. Jeżeli zajęcia zaczynają się później, formularz wybiera pierwszy miesiąc z dostępnymi terminami.
+
+W osobnej zakładce **Moje dzieci** rodzic widzi tylko swoje dzieci, ich lokalizacje, grupy, najbliższe terminy, należności i historię korekt. Nie widzi innych rodzin ani notatek administracyjnych. Może poprawić dane swojego dziecka. Należność jest liczona z góry za pozostałe zajęcia wybranego miesiąca; minione, odwołane i wykluczone terminy nie są naliczane. Cena próby jest ustawiana w grupie, także na 0 zł.
 
 Stałe przypisanie dziecka do grupy jest oddzielone od miesięcznych rozliczeń, więc kolejne miesiące nie zwiększają liczebności grupy. W tej wersji miesięczne naliczenie dotyczy wybranego miesiąca — automatyczne tworzenie należności na kolejne miesiące pozostaje kolejnym etapem. Nie ma jeszcze płatności online, wpłat, zwrotów, rezygnacji z grupy ani odrabiania zajęć. Przypisania próbne pozostają widoczne do późniejszej obsługi ich statusów. W tym samym miesiącu nie można jeszcze zmienić zapisu próbnego na stały bez obsługi administracyjnej.
 
