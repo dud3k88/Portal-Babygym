@@ -364,9 +364,9 @@ const server = http.createServer(async (req,res) => {
    }
    return send(404,{error:'Nie znaleziono operacji.'});
   }
-  if(req.method==='GET' && ['/', '/zapisy', '/zapisy/', '/public-registration.js', '/public-registration.css', '/app.js', '/style.css'].includes(url.pathname)) {
+  if(req.method==='GET' && ['/', '/zapisy', '/zapisy/', '/public-registration.js', '/public-registration.css', '/app.js', '/style.css', '/brand.css', '/fonts/baloo-bhai-2.ttf', '/fonts/open-sans.ttf'].includes(url.pathname)) {
    const name=url.pathname==='/'?'index.html':url.pathname==='/zapisy'||url.pathname==='/zapisy/'?'public-registration.html':url.pathname.slice(1);
-   res.writeHead(200,{'Content-Type':name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':'text/html; charset=utf-8'});return res.end(readFileSync(new URL('./public/'+name,import.meta.url)));
+   res.writeHead(200,{'Content-Type':name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':name.endsWith('.ttf')?'font/ttf':'text/html; charset=utf-8'});return res.end(readFileSync(new URL('./public/'+name,import.meta.url)));
   }
   send(404,{error:'Nie znaleziono strony.'});
  } catch(e) {send(e.status||400,{error:e.message});}

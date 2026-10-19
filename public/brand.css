@@ -1,0 +1,90 @@
+/* Evolution Academy: palette and typefaces from evolutionacademy.pl.
+   Fonts are served locally; their OFL licenses are in public/fonts. */
+@font-face {
+  font-family: 'Open Sans'; src: url('/fonts/open-sans.ttf') format('truetype');
+  font-style: normal; font-weight: 300 800; font-display: swap;
+}
+@font-face {
+  font-family: 'Baloo Bhai 2'; src: url('/fonts/baloo-bhai-2.ttf') format('truetype');
+  font-style: normal; font-weight: 400 800; font-display: swap;
+}
+:root {
+  font-family: 'Open Sans', Arial, sans-serif;
+  color: #030712;
+  background: #fff;
+  --ink: #030712;
+  --pink: #cc6bbb;
+  --coral: #f16b67;
+  --orange: #f3993c;
+  --muted: #5c5d60;
+  --line: #eadfe5;
+  --accent: #923b7e;
+  --record-accent: #b94e9e;
+  --radius: 18px;
+}
+body, .sidebar { background: #fff; color: var(--ink); }
+h1, h2, h3 { font-family: 'Baloo Bhai 2', 'Open Sans', sans-serif; color: var(--ink); font-weight: 600; letter-spacing: -.025em; }
+h1 { font-weight: 700; }
+button, input, select, textarea { font-family: inherit; }
+p, .hint, .page-heading p:not(.eyebrow), .entry small,
+.trainer-contact, .trainer-groups > p, .profile-data p,
+.list-row-title small, .list-occupancy small, .group-schedule,
+.registration-group-main p, .group-info small, .stat-label,
+.athlete-count, .athlete-fields dt, .athlete-finance-summary span,
+.topbar, .topbar b, .workspace-label, .sidebar-footer,
+.sidebar-footer small, .group-trainers > span, .detail-facts span,
+.month-filter, .selection-summary small, .steps li { color: var(--muted); }
+label, legend, .list-row-title, .athlete-fields dd,
+.athlete-finance-summary strong, .detail-facts strong { color: var(--ink); }
+.primary {
+  background: linear-gradient(110deg, #fdd6d5, #fdebf1);
+  border: 1px solid #e8bcd6;
+  color: #030712;
+  border-radius: 20px;
+  font-weight: 600;
+  box-shadow: none;
+}
+.primary:hover { background: #f7c8d7; }
+.primary:disabled { background: #f3eeee; color: #686166; }
+.secondary { background: #fffaf7; border-color: #e8cfc4; color: #613c32; border-radius: 20px; }
+.secondary:hover { background: #feeee3; }
+.tertiary, .list-enter, .eyebrow, .public-registration-entry,
+.login-link, .existing-account a { color: var(--accent); }
+nav button { color: #5c5d60; border-radius: 12px; }
+nav button.active { color: #87336f; background: #fdebf1; box-shadow: inset 3px 0 var(--record-accent); }
+nav button:hover { background: #fcf2f4; }
+.nav-label { color: #696166; }
+.section-card, .trainer-card, .stat, .child-card, .step-panel {
+  border-color: var(--line); border-radius: 18px; box-shadow: 0 3px 12px #03071205;
+}
+.admin-list-row, .location-list .admin-list-row {
+  border-color: #e8d5e1 !important;
+  border-left-color: var(--record-accent) !important;
+  background: #fff;
+}
+.admin-list-row:hover, .location-list .admin-list-row:hover { background: #fff9fb; }
+.entry, .entry:last-child, .athlete-directory > .entry,
+.registration-group, .profile-group { border-color: #e8d5e1; border-left-color: var(--record-accent); }
+.stat-icon, .stat:nth-child(3) .stat-icon { background: #fdebf1; color: #923b7e; }
+.stat:nth-child(2) .stat-icon { background: #fef0df; color: #9c571a; }
+.avatar { background: linear-gradient(135deg, #fdebf1, #feeee3); color: #923b7e; }
+.trainer-group, .pill, .availability, .places { background: #fdebf1; color: #87336f; border-color: #e8bcd6; }
+.availability.full, .places.full { background: #fef0df; color: #7b4a22; }
+.detail-facts, .detail-roster, .registration-summary, .selection-summary { background: #fffaf8; border-color: #ead8cf; }
+.total, #public-quote, #final-amount { background: #fff4eb; color: #704121; border-color: #ecc9ac; }
+input, select, textarea { background: #fff; color: var(--ink); border-color: #c6bdc3; border-radius: 10px; }
+input::placeholder { color: #776d74; }
+fieldset { border-color: #ded1d9; }
+input:focus, select:focus, textarea:focus, button:focus-visible,
+a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.athlete-tabs [role='tab'] { color: #5c5d60; }
+.athlete-tabs [aria-selected='true'] { color: #87336f; background: #fdebf1; border-color: #e8bcd6; }
+.steps li > span { background: #fcf2f4; color: #5c5d60; }
+.steps li[aria-current] { color: var(--accent); }
+.steps li[aria-current] > span { background: var(--accent); color: #fff; }
+.group-option { border-color: #e8d5e1; border-left: 4px solid var(--record-accent); }
+.group-option:has(input:checked) { padding: 18px; border: 1px solid #b94e9e; border-left: 4px solid var(--record-accent); background: #fff7fa; }
+.group-option:has(input:disabled) { border-left-color: #bcb5ba; background: #fafafa; }
+#brand-fallback > span, #public-brand-fallback > span { color: var(--pink); }
+@media (max-width: 580px) { .group-option:has(input:checked) { gap: 10px; } }
+.trainer-card, .stat, .child-card { border-left-color: var(--record-accent); }

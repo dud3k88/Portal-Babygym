@@ -115,3 +115,11 @@ Testy integracyjne uruchamiają serwer z osobnym loaderem `scripts/fixed-clock.m
 - **Rozliczenia:** kwota do zapłaty, nadpłata, część należności z poprzednich miesięcy oraz historia naliczeń i korekt ze wszystkich grup tego zawodnika. Saldo naliczeń dodatnie oznacza należność, ujemne nadpłatę. Należność z poprzednich miesięcy jest ograniczona do bieżącej kwoty do zapłaty, aby nie pokazywać zadłużenia pokrytego korektami/nadpłatą. Brak terminów płatności i integracji wpłat nie pozwala oznaczać automatycznie całej kwoty jako przeterminowanego długu.
 
 Zawodnik z dwiema grupami nadal ma jeden wiersz na liście. Dwie odrębne kartoteki o podobnym imieniu nie są automatycznie łączone, bo mogłyby należeć do różnych dzieci. Zakładki działają także klawiaturą (strzałki lewo/prawo, Home, End).
+
+### Stylistyka Evolution Academy
+
+Panel i publiczny formularz korzystają ze wspólnego `public/brand.css`, opartego na
+kolorach strony evolutionacademy.pl: róż `#cc6bbb`, pomarańcz `#f3993c`, ciemny tekst
+`#030712` oraz jasne różowo-brzoskwiniowe akcenty. Tło aplikacji pozostaje białe.
+Nagłówki używają Baloo Bhai 2, a formularze i treść Open Sans. Fonty są dostarczane
+lokalnie z `public/fonts`, wraz z licencjami OFL; aplikacja nie pobiera ich od Google.
