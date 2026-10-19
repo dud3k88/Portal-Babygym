@@ -88,3 +88,13 @@ a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outli
 #brand-fallback > span, #public-brand-fallback > span { color: var(--pink); }
 @media (max-width: 580px) { .group-option:has(input:checked) { gap: 10px; } }
 .trainer-card, .stat, .child-card { border-left-color: var(--record-accent); }
+.directory-filters { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 16px; align-items: end; margin-bottom: 22px; }
+.directory-filters label { font-size: 12px; }
+.directory-filters .secondary { min-height: 43px; white-space: normal; }
+.billing-filters-card { margin-bottom: 22px; }
+#billing-count { font-size: 12px; margin-bottom: 0; }
+.list-pagination { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 14px; margin-top: 20px; }
+.list-pagination:empty { display: none; }
+.list-pagination span { font-size: 12px; color: var(--muted); }
+.list-pagination button:disabled { cursor: default; }
+@media(max-width:580px) { .directory-filters { grid-template-columns: 1fr; } }

@@ -123,3 +123,12 @@ kolorach strony evolutionacademy.pl: róż `#cc6bbb`, pomarańcz `#f3993c`, ciem
 `#030712` oraz jasne różowo-brzoskwiniowe akcenty. Tło aplikacji pozostaje białe.
 Nagłówki używają Baloo Bhai 2, a formularze i treść Open Sans. Fonty są dostarczane
 lokalnie z `public/fonts`, wraz z licencjami OFL; aplikacja nie pobiera ich od Google.
+
+Listę zawodników można filtrować po lokalizacji, grupie i rodzaju zapisu (stały,
+próbny lub bez grupy), a także wyszukiwać po danych dziecka lub rodzica. Jedno
+dziecko pozostaje jednym wynikiem niezależnie od liczby przypisań. Rozliczenia
+mają wyszukiwanie oraz filtry lokalizacji, grupy, miesiąca należności i salda
+(do zapłaty, zero, nadpłata). Historia korekt dotyczy należności pasujących do
+filtrów; miesiąc odnosi się do należności, nie daty wykonania korekty. Saldo zerowe
+nie potwierdza wpłaty. Listy zawodników, należności i korekt mają strony po 20
+pozycji; liczniki i suma salda obejmują wszystkie wyniki wybranych filtrów.

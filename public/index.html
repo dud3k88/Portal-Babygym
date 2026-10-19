@@ -48,7 +48,7 @@
 
     <section id="athletes" class="page" aria-labelledby="athletes-title" hidden>
       <div class="page-heading"><div><p class="eyebrow">KARTOTEKA</p><h1 id="athletes-title">Zawodnicy<span>.</span></h1><p>Dane dzieci, rodzice, przypisania do grup i historia rozliczeń.</p></div><div class="heading-actions"><button class="secondary" data-open="parent-dialog">Dodaj rodzica</button><button class="primary" data-new-athlete>＋ Dodaj zawodnika</button></div></div>
-      <article class="section-card"><div class="section-toolbar"><h2>Kartoteka zawodników</h2><label>Szukaj zawodnika lub rodzica<input type="search" id="athlete-search" placeholder="Imię, nazwisko lub email"></label></div><div id="athlete-list"></div></article>
+      <article class="section-card"><div class="section-toolbar"><h2>Kartoteka zawodników</h2><label>Szukaj zawodnika lub rodzica<input type="search" id="athlete-search" placeholder="Imię, nazwisko lub email"></label></div><div class="directory-filters" id="athlete-filters"><label>Lokalizacja<select id="athlete-filter-location"></select></label><label>Grupa<select id="athlete-filter-group"></select></label><label>Zapis<select id="athlete-filter-status"><option value="">Wszyscy zawodnicy</option><option value="active">Zapis stały</option><option value="trial">Zapis próbny</option><option value="none">Bez grupy</option></select></label><button type="button" class="secondary" id="athlete-filter-reset">Wyczyść filtry</button></div><div id="athlete-list" aria-live="polite"></div><div id="athlete-pagination" class="list-pagination"></div></article>
     </section>
 
     <section id="groups" class="page" aria-labelledby="groups-title">
@@ -75,7 +75,7 @@
 
     <section id="billing" class="page" aria-labelledby="billing-title" hidden>
       <div class="page-heading"><div><p class="eyebrow">FINANSE</p><h1 id="billing-title">Rozliczenia<span>.</span></h1><p>Należności za zajęcia i historia wprowadzonych korekt.</p></div></div>
-      <div class="billing-grid"><article class="section-card"><h2>Zapisy i należności</h2><div id="enrollments"></div></article><article class="section-card"><h2>Historia korekt</h2><div id="history"></div></article></div>
+      <article class="section-card billing-filters-card"><div class="directory-filters" id="billing-filters"><label>Szukaj zawodnika lub rodzica<input type="search" id="billing-search" placeholder="Imię, nazwisko lub email"></label><label>Lokalizacja<select id="billing-filter-location"></select></label><label>Grupa<select id="billing-filter-group"></select></label><label>Miesiąc należności<input type="month" id="billing-filter-month"></label><label>Saldo należności<select id="billing-filter-status"><option value="">Wszystkie</option><option value="due">Do zapłaty</option><option value="zero">Saldo zerowe</option><option value="credit">Nadpłata</option></select></label><button type="button" class="secondary" id="billing-filter-reset">Wyczyść filtry</button></div><p class="hint">Saldo zerowe nie oznacza potwierdzonej wpłaty — płatności online nie są jeszcze podłączone.</p><p id="billing-count" aria-live="polite"></p></article><div class="billing-grid"><article class="section-card"><h2>Zapisy i należności</h2><div id="enrollments"></div><div id="billing-pagination" class="list-pagination"></div></article><article class="section-card"><h2>Historia korekt</h2><div id="history"></div><div id="history-pagination" class="list-pagination"></div></article></div>
     </section>
 
     <section id="settings" class="page" aria-labelledby="settings-title" hidden>

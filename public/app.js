@@ -180,9 +180,48 @@ function emptyState(icon, heading, description, action = '') {
   return `<div class="empty"><svg aria-hidden="true"><use href="#i-${icon}"/></svg><h3>${heading}</h3><p>${description}</p>${action}</div>`;
 }
 
+const directoryPages = { athlete: 1, billing: 1, history: 1 };
+const directoryPageSize = 20;
+
+function updateDirectoryFilters(prefix) {
+  const locationSelect = $(`#${prefix}-filter-location`);
+  const groupSelect = $(`#${prefix}-filter-group`);
+  const locationId = locationSelect.value, groupId = groupSelect.value;
+  locationSelect.innerHTML = '<option value="">Wszystkie lokalizacje</option>' + state.locations.map(location => `<option value="${location.id}">${escape(location.name)}</option>`).join('');
+  locationSelect.value = locationId;
+  const groups = state.groups.filter(group => !locationSelect.value || String(group.location_id) === locationSelect.value);
+  groupSelect.innerHTML = '<option value="">Wszystkie grupy</option>' + groups.map(group => `<option value="${group.id}">${escape(group.name)} · ${escape(group.location)}</option>`).join('');
+  groupSelect.value = groupId;
+}
+
+function directorySlice(prefix, records) {
+  const pages = Math.max(1, Math.ceil(records.length / directoryPageSize));
+  directoryPages[prefix] = Math.min(directoryPages[prefix], pages);
+  const page = directoryPages[prefix];
+  $(`#${prefix}-pagination`).innerHTML = pages > 1 ? `<button class="secondary" data-directory-page="${prefix}" data-page="${page-1}" ${page===1?'disabled':''}>Poprzednia</button><span>Strona ${page} z ${pages}</span><button class="secondary" data-directory-page="${prefix}" data-page="${page+1}" ${page===pages?'disabled':''}>Następna</button>` : '';
+  return records.slice((page - 1) * directoryPageSize, page * directoryPageSize);
+}
+
 function renderAdmin() {
-  $('#enrollments').innerHTML = state.enrollments.length ? state.enrollments.map(e => `<div class="entry"><strong>${escape(e.child)}</strong> · ${money(e.balance)}<small>${escape(e.parent)} · ${escape(e.email)}<br>${escape(e.location)} / ${escape(e.group_name)} · ${escape(e.month)}${e.trial_id ? ' · próba' : ''}</small><button class="secondary" data-adjust="${e.id}">Korekta należności</button></div>`).join('') : emptyState('wallet', 'Brak należności', 'Zapisy rodziców i ich należności pojawią się tutaj.');
-  $('#history').innerHTML = state.adjustments.map(a => `<div class="entry"><strong>${money(a.amount)}</strong> · zapis #${a.enrollment_id}<br>${escape(a.reason)}<small>${escape(a.created_at.replace('T', ' '))} · administrator testowy</small></div>`).join('') || '<p class="hint">Nie wprowadzono jeszcze żadnych korekt.</p>';
+  updateDirectoryFilters('billing');
+  const search = $('#billing-search').value.trim().toLocaleLowerCase('pl');
+  const location = $('#billing-filter-location').value, group = $('#billing-filter-group').value;
+  const month = $('#billing-filter-month').value, status = $('#billing-filter-status').value;
+  const matches = state.enrollments.filter(entry => {
+    const assignedGroup = state.groups.find(item => item.id === entry.group_id);
+    return [entry.child,entry.parent,entry.email].join(' ').toLocaleLowerCase('pl').includes(search)
+      && (!location || String(entry.location_id ?? assignedGroup?.location_id) === location)
+      && (!group || String(entry.group_id) === group)
+      && (!month || entry.month === month)
+      && (!status || (status === 'due' ? entry.balance > 0 : status === 'credit' ? entry.balance < 0 : entry.balance === 0));
+  });
+  const visible = directorySlice('billing', matches);
+  const total = matches.reduce((sum,entry)=>sum+entry.balance,0);
+  $('#billing-count').textContent = `Należności: ${matches.length} z ${state.enrollments.length} · Łączne saldo wyników: ${money(total)}`;
+  $('#enrollments').innerHTML = visible.length ? visible.map(e => `<div class="entry"><strong>${escape(e.child)}</strong> · ${money(e.balance)}<small>${escape(e.parent)} · ${escape(e.email)}<br>${escape(e.location)} / ${escape(e.group_name)} · ${escape(e.month)}${e.trial_id ? ' · próba' : ''}</small><button class="secondary" data-adjust="${e.id}">Korekta należności</button></div>`).join('') : emptyState('wallet', 'Brak należności', 'Brak należności pasujących do wybranych filtrów.');
+  const matchingIds = new Set(matches.map(entry=>entry.id));
+  const adjustments = state.adjustments.filter(entry=>matchingIds.has(entry.enrollment_id));
+  $('#history').innerHTML = directorySlice('history',adjustments).map(a => `<div class="entry"><strong>${money(a.amount)}</strong> · zapis #${a.enrollment_id}<br>${escape(a.reason)}<small>${escape(a.created_at.replace('T', ' '))} · administrator testowy</small></div>`).join('') || '<p class="hint">Brak korekt dla wybranych należności.</p>';
 }
 
 function termLabel(session) {
@@ -510,14 +549,26 @@ function openRoster(groupId) {
 }
 
 function renderAthletes() {
+  updateDirectoryFilters('athlete');
   const search = $('#athlete-search').value.trim().toLocaleLowerCase('pl');
+  const location = $('#athlete-filter-location').value, group = $('#athlete-filter-group').value;
+  const status = $('#athlete-filter-status').value;
   const matches = state.athletes.filter(athlete => {
     const parent = state.parents.find(entry => entry.id === athlete.parent_id);
-    return [athlete.name, parent?.name, parent?.email].join(' ').toLocaleLowerCase('pl').includes(search);
-  });
-  $('#athlete-list').innerHTML = matches.length
-    ? `<p class="athlete-count">Liczba zawodników: ${matches.length}</p><div class="athlete-directory">${matches.map(rosterRow).join('')}</div>`
-    : emptyState('users',search?'Brak wyników':'Brak zawodników',search?'Zmień wpisaną nazwę lub adres email.':'Dodaj zawodnika i przypisz do niego rodzica.');
+    const memberships = state.memberships.filter(member => member.athlete_id === athlete.id);
+    const membershipMatches = memberships.some(member => {
+      const assignedGroup = state.groups.find(entry=>entry.id===member.group_id);
+      return (!location || String(assignedGroup?.location_id) === location)
+        && (!group || String(member.group_id) === group)
+        && (!status || member.status === status);
+    });
+    return [athlete.name, parent?.name, parent?.email].join(' ').toLocaleLowerCase('pl').includes(search)
+      && (status === 'none' ? memberships.length === 0 && !location && !group : (!location && !group && !status) || membershipMatches);
+  }).sort((a,b)=>a.name.localeCompare(b.name,'pl') || a.id-b.id);
+  const visible = directorySlice('athlete',matches);
+  $('#athlete-list').innerHTML = `<p class="athlete-count">Liczba zawodników: ${matches.length} z ${state.athletes.length}</p>` + (visible.length
+    ? `<div class="athlete-directory">${visible.map(rosterRow).join('')}</div>`
+    : emptyState('users','Brak zawodników','Brak zawodników pasujących do wybranych filtrów.'));
 }
 
 function updateAthleteSelects() {
@@ -619,7 +670,31 @@ async function createInvitation(parentId) {
   } catch(error) { notice(error.message,true); }
 }
 
-$('#athlete-search').oninput = renderAthletes;
+for (const prefix of ['athlete','billing']) {
+  const render = prefix === 'athlete' ? renderAthletes : renderAdmin;
+  const search = $(`#${prefix}-search`);
+  search.oninput = () => { directoryPages[prefix] = 1; if (prefix === 'billing') directoryPages.history = 1; render(); };
+  $(`#${prefix}-filters`).onchange = event => {
+    if (event.target.id === `${prefix}-filter-location`) $(`#${prefix}-filter-group`).value = '';
+    if (prefix === 'athlete' && event.target.value === 'none') {
+      $('#athlete-filter-location').value = ''; $('#athlete-filter-group').value = '';
+    } else if (prefix === 'athlete' && ['athlete-filter-location','athlete-filter-group'].includes(event.target.id) && $('#athlete-filter-status').value === 'none') $('#athlete-filter-status').value = '';
+    directoryPages[prefix] = 1; if (prefix === 'billing') directoryPages.history = 1; render();
+  };
+  $(`#${prefix}-filter-reset`).onclick = () => {
+    search.value = '';
+    $(`#${prefix}-filters`).querySelectorAll('input,select').forEach(input=>input.value='');
+    directoryPages[prefix] = 1; if (prefix === 'billing') directoryPages.history = 1; render();
+  };
+}
+document.addEventListener('click', event => {
+  const button = event.target.closest('[data-directory-page]');
+  if (!button || button.disabled) return;
+  const prefix = button.dataset.directoryPage;
+  directoryPages[prefix] = Number(button.dataset.page);
+  (prefix === 'athlete' ? renderAthletes : renderAdmin)();
+  $(`#${prefix === 'athlete' ? 'athlete-list' : prefix === 'history' ? 'history' : 'enrollments'}`).scrollIntoView({block:'start'});
+});
 $('#save-athlete').onsubmit = async event => {
   event.preventDefault();
   const form=event.target,button=form.querySelector('[type="submit"]'),body=Object.fromEntries(new FormData(form));
