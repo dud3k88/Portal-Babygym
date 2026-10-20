@@ -2,16 +2,19 @@
 
 System zapisów na zajęcia, kartotek zawodników i miesięcznych należności. Wymaga Node.js 24+; baza SQLite i moduły uwierzytelniania są dostępne w Node. Brak zewnętrznych zależności aplikacji. Python 3 służy do testów integracyjnych i narzędzia kopii zapasowych. Playwright jest zależnością deweloperską do E2E; serwer nie ma zależności runtime.
 
-## Specyfikacja i etap 1 (20.10.2026)
+## Specyfikacja i postęp wdrożenia
 
 - [Zatwierdzona specyfikacja](docs/SPECYFIKACJA.md)
 - [Audyt 10 modułów, model danych, ryzyka i plan etapów](docs/AUDYT-I-PLAN.md)
 - [Wdrożony etap 1 i checklista odbioru](docs/ETAP-1.md)
+- [Etap 2A: konta i panel trenera, migracja trzech ról](docs/ETAP-2A.md)
 - [Kopia, testowe odtworzenie i procedura aktualizacji](docs/OPERACJE.md)
 
 Przed pierwszym uruchomieniem tej aktualizacji zatrzymaj aplikację i wykonaj kopię
-bazy oraz logo według instrukcji. Nowy schemat dodaje dane/status placówki, kontrolę
-dostępu rodzica i dziennik zmian. Istniejące identyfikatory i naliczenia pozostają.
+bazy oraz logo według instrukcji. Migracja 1 dodaje dane/status placówki, kontrolę dostępu rodzica i dziennik zmian.
+Migracja 2 dodaje rolę i konta trenerów. Przed przebudową ograniczenia ról tworzy
+automatyczny snapshot bazy `*.before-v2-*.sqlite` (bez logo); zachowuje wszystkie
+konta i ich identyfikatory, hashe haseł i sesje. Istniejące identyfikatory i naliczenia pozostają.
 Nie uruchamiaj wcześniejszego kodu na bazie z nowymi triggerami audytu; wycofanie
 wymaga odtworzenia kopii do osobnego katalogu.
 
@@ -43,7 +46,7 @@ Link z adresem localhost działa tylko na komputerze z serwerem. Wersja lokalna 
 - **Zawodnicy:** jedna lista kartotek, po jednym wierszu na zawodnika niezależnie od liczby grup i lokalizacji. Wyszukiwanie po dziecku, rodzicu lub emailu. Po wejściu dostępne są zakładki „Dane”, „Grupy”, „Rodzic” i „Rozliczenia”; przypisania nie są powielane na liście głównej. Każdy zawodnik ma przypisanego rodzica; administrator może dodać profil rodzica przed dodaniem dziecka. Zmiana przypisanego rodzica przenosi dostęp do kartoteki i rozliczeń dziecka.
 - **Lokalizacje:** rejestr przedszkoli wybieranych z listy. Nazwy różniące się tylko wielkością liter lub dodatkowymi spacjami nie tworzą duplikatów. Kartoteka zawiera też adres, kontakt i notatki administratora oraz status aktywna/wstrzymana/archiwalna. Dwa ostatnie zamykają nowe zapisy i tworzenie grup, zachowując istniejący grafik i saldo. Poprawienie nazwy aktualizuje etykiety w całym systemie, zachowując identyfikatory i wykluczenia. Nie zgadujemy, czy różne literówki oznaczają jedno miejsce.
 - **Dni wolne:** dzień lub zakres dla całego systemu, wybranych lokalizacji albo grup. Lokalizacje mogą mieć dni wolne jeszcze przed utworzeniem grup. Święta dodaje administrator — nie są automatycznie importowane.
-- **Trenerzy:** profile prowadzących i przypisania wielu trenerów do jednej grupy. Dodanie profilu nie tworzy konta logowania i nie wysyła zaproszenia. Obecności i konta trenerów są kolejnym etapem.
+- **Trenerzy:** profile prowadzących i przypisania wielu trenerów do jednej grupy. Dodanie profilu nie tworzy jeszcze konta. Przycisk **Utwórz konto** generuje link aktywacyjny do ręcznego przekazania trenerowi. Edycja profilu pozwala zmienić kontakt i status. Nieaktywny lub archiwalny trener traci dostęp i sesje. Obecności, zastępstwa i wynagrodzenia pozostają kolejnymi etapami.
 - **Rozliczenia:** należności za wybrany miesiąc, ręczne korekty z powodem i historia korekt automatycznych.
 - **Dziennik zmian:** historia zmian danych oraz udanych operacji dostępu, z autorem i starymi/nowymi wartościami. Wyłącznie Administrator, od momentu wdrożenia dziennika.
 - **Wygląd:** wgranie oryginalnego logo PNG/JPG/WebP do 5 MB. Obraz jest zachowywany bez przetwarzania w lokalnym `data/logo`. Kolory panelu pochodzą z przekazanego znaku marki. Do czasu wgrania pliku widoczna jest tekstowa nazwa.
@@ -78,6 +81,7 @@ python3 test/smoke.py
 python3 test/accounts.py
 python3 test/public_signup.py
 python3 test/foundations.py
+python3 test/trainers.py
 ```
 
 Testy jednostkowe sprawdzają naliczanie opłat, daty i wykluczenia. Test integracyjny na porcie 3107 używa starego schematu bazy i potwierdza migrację, zapisy, wykluczenia, poprawianie nazw, korekty, trenerów, logo i zachowanie danych po restarcie. Test na porcie 3118 sprawdza konta, izolację rodzin, wymuszenie rodzica przy dziecku, liczebność grupy, edycję zapisanej grupy, zachowanie cen i korekt, aktywację i wylogowanie. Oba używają tymczasowych baz i fikcyjnych danych; nie modyfikują bazy deweloperskiej.
@@ -149,3 +153,15 @@ nie potwierdza wpłaty. Listy zawodników, należności i korekt mają strony po
 pozycji; liczniki i suma salda obejmują wszystkie wyniki wybranych filtrów.
 
 Administrator może zablokować konto rodzica w kartotece dziecka → Rodzic. Kończy to sesje i unieważnia zaproszenia; odblokowanie wymaga ponownego logowania. Operacja jest zapisywana w dzienniku.
+
+## Panel trenera (etap 2A)
+
+Konto trenera aktywuje się jednorazowym linkiem od Administratora. Po zalogowaniu
+trener widzi **Mój grafik i grupy**: terminy według miesiąca, listę dzieci własnych
+grup oraz kontakt do ich rodziców. Może zapisać własną notatkę o dziecku. Notatki
+widzą autor i Administrator, nigdy Rodzic. Dane finansowe i cudze grupy są
+niedostępne w API. Odebranie przypisania usuwa dostęp do grupy i jej dzieci.
+Trener nie może wysyłać wiadomości rodzicom ani sam zmieniać przypisań.
+
+W bazie są dokładnie trzy role: Administrator, Trener, Rodzic. MFA, odzyskiwanie
+hasła i drugi zweryfikowany opiekun to następny etap 2B. Nie są jeszcze wdrożone.

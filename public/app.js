@@ -8,7 +8,7 @@ const $ = selector => document.querySelector(selector);
 const money = value => new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' }).format(value / 100);
 const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const dayNames = ['niedziela', 'poniedziałek', 'wtorek', 'środa', 'czwartek', 'piątek', 'sobota'];
-const viewNames = { audit: 'Dziennik zmian', auth: 'Logowanie', athletes: 'Zawodnicy', groups: 'Grupy', locations: 'Lokalizacje', 'days-off': 'Dni wolne', trainers: 'Trenerzy', billing: 'Rozliczenia', settings: 'Wygląd', parent: 'Zapisy na zajęcia', children: 'Moje dzieci' };
+const viewNames = { coach: 'Mój grafik i grupy', audit: 'Dziennik zmian', auth: 'Logowanie', athletes: 'Zawodnicy', groups: 'Grupy', locations: 'Lokalizacje', 'days-off': 'Dni wolne', trainers: 'Trenerzy', billing: 'Rozliczenia', settings: 'Wygląd', parent: 'Zapisy na zajęcia', children: 'Moje dzieci' };
 let toastTimer;
 let auditCursor = null;
 let auditVersion = 0;
@@ -17,7 +17,7 @@ async function api(path, body) {
   const response = await fetch('/api/' + path, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {});
   const data = await response.json();
   if (!response.ok) {
-    if (response.status === 401 && !path.startsWith('auth/')) { authInfo.user = null; state = null; showAuth(); }
+    if (response.status === 401 && !path.startsWith('auth/')) { authInfo.user = null; state = null; window.location.replace('/'); }
     throw Error(data.error);
   }
   return data;
@@ -46,14 +46,15 @@ function notice(message, error = false) {
 
 function switchView(view) {
   if (!authInfo.user) view = 'auth';
+  else if (authInfo.user.role === 'trainer') view = 'coach';
   else if (authInfo.user.role === 'parent' && !['parent','children'].includes(view)) view = 'parent';
-  else if (!viewNames[view] || view === 'auth') view = 'groups';
+  else if (!viewNames[view] || view === 'auth' || view === 'coach') view = 'groups';
   $('nav').hidden = !authInfo.user;
   $('#logout').hidden = !authInfo.user;
   $('#public-registration-link').hidden = authInfo.user?.role !== 'admin';
   $('#account-name').textContent = authInfo.user?.name || '';
-  for (const button of document.querySelectorAll('nav [data-view]')) button.hidden = authInfo.user?.role === 'parent' && !['parent','children'].includes(button.dataset.view);
-  for (const label of document.querySelectorAll('nav .nav-label')) label.hidden = authInfo.user?.role === 'parent' && !label.classList.contains('second');
+  for (const button of document.querySelectorAll('nav [data-view]')) button.hidden = authInfo.user?.role === 'trainer' ? button.dataset.view !== 'coach' : button.dataset.view === 'coach' || (authInfo.user?.role === 'parent' && !['parent','children'].includes(button.dataset.view));
+  for (const label of document.querySelectorAll('nav .nav-label')) label.hidden = authInfo.user?.role === 'trainer' || (authInfo.user?.role === 'parent' && !label.classList.contains('second'));
   for (const section of document.querySelectorAll('main > .page')) section.hidden = section.id !== view;
   for (const button of document.querySelectorAll('nav [data-view]')) {
     const active = button.dataset.view === view;
@@ -63,7 +64,7 @@ function switchView(view) {
   }
   $('#breadcrumb').textContent = viewNames[view];
   $('nav [data-view="parent"]').innerHTML = '<svg><use href="#i-arrow"/></svg>' + 'Zapisy na zajęcia';
-  $('.workspace-label').innerHTML = '<span class="workspace-dot"></span> ' + (!authInfo.user ? 'Evolution Academy' : authInfo.user.role === 'parent' ? 'Panel rodzica' : 'Panel administratora');
+  $('.workspace-label').innerHTML = '<span class="workspace-dot"></span> ' + (!authInfo.user ? 'Evolution Academy' : authInfo.user.role === 'trainer' ? 'Panel trenera' : authInfo.user.role === 'parent' ? 'Panel rodzica' : 'Panel administratora');
   $('#notice').hidden = true;
   if(view==='audit') loadAudit();
 }
@@ -86,7 +87,7 @@ function trainersFor(groupId) {
 }
 
 function trainerCheckboxes(ids = []) {
-  return state.trainers.map(trainer => `<label class="check"><input type="checkbox" value="${trainer.id}" ${ids.includes(trainer.id) ? 'checked' : ''}>${escape(trainer.name)}</label>`).join('');
+  return state.trainers.map(trainer => `<label class="check"><input type="checkbox" value="${trainer.id}" ${ids.includes(trainer.id) ? 'checked' : ''}>${escape(trainer.name)}${trainer.status&&trainer.status!=='active'?' (nieaktywny)':''}</label>`).join('');
 }
 
 function updateLocationSelect() {
@@ -128,9 +129,9 @@ async function loadAudit(append=false) {
     const result=await api('audit'+(append&&auditCursor?'?before='+auditCursor:''));
     if(version!==auditVersion||authInfo.user?.role!=='admin')return;
     auditCursor=result.next_cursor;
-    const entities={locations:'Placówka',users:'Konto',athletes:'Zawodnik',groups:'Grupa',sessions:'Termin',memberships:'Uczestnictwo',enrollments:'Należność',enrollment_sessions:'Pozycja należności',adjustments:'Korekta',exclusions:'Dni wolne',trainers:'Trener',group_trainers:'Przypisanie trenera',access:'Dostęp'};
+    const entities={trainer_notes:'Notatka trenera',locations:'Placówka',users:'Konto',athletes:'Zawodnik',groups:'Grupa',sessions:'Termin',memberships:'Uczestnictwo',enrollments:'Należność',enrollment_sessions:'Pozycja należności',adjustments:'Korekta',exclusions:'Dni wolne',trainers:'Trener',group_trainers:'Przypisanie trenera',access:'Dostęp'};
     const actions={insert:'Dodano',update:'Zmieniono',delete:'Usunięto','session.started':'Rozpoczęto sesję','session.ended':'Wylogowano','account.activated':'Aktywowano konto','invitation.created':'Utworzono zaproszenie'};
-    const fields={id:'ID',name:'Nazwa',email:'Email',phone:'Telefon',role:'Rola',access_status:'Dostęp',address:'Adres',city:'Miejscowość',contact_name:'Osoba kontaktowa',notes:'Notatki',status:'Status',parent_id:'Rodzic ID',birth_date:'Data urodzenia',location_id:'Placówka ID',capacity:'Limit miejsc',price:'Cena (gr)',trial_price:'Cena próby (gr)',trials:'Próby',start_date:'Od dnia',end_date:'Do dnia',start_time:'Od godziny',end_time:'Do godziny',weekday:'Dzień tygodnia',group_id:'Grupa ID',starts_at:'Początek',ends_at:'Koniec',cancelled:'Odwołano',athlete_id:'Zawodnik ID',joined_at:'Data zapisu',trial_id:'Próba ID',month:'Miesiąc',amount:'Kwota (gr)',enrollment_id:'Należność ID',session_id:'Termin ID',reason:'Powód',scope:'Zakres',trainer_id:'Trener ID'};
+    const fields={body:'Treść',updated_at:'Data zmiany',user_id:'Konto ID',id:'ID',name:'Nazwa',email:'Email',phone:'Telefon',role:'Rola',access_status:'Dostęp',address:'Adres',city:'Miejscowość',contact_name:'Osoba kontaktowa',notes:'Notatki',status:'Status',parent_id:'Rodzic ID',birth_date:'Data urodzenia',location_id:'Placówka ID',capacity:'Limit miejsc',price:'Cena (gr)',trial_price:'Cena próby (gr)',trials:'Próby',start_date:'Od dnia',end_date:'Do dnia',start_time:'Od godziny',end_time:'Do godziny',weekday:'Dzień tygodnia',group_id:'Grupa ID',starts_at:'Początek',ends_at:'Koniec',cancelled:'Odwołano',athlete_id:'Zawodnik ID',joined_at:'Data zapisu',trial_id:'Próba ID',month:'Miesiąc',amount:'Kwota (gr)',enrollment_id:'Należność ID',session_id:'Termin ID',reason:'Powód',scope:'Zakres',trainer_id:'Trener ID'};
     const markup=result.items.map(entry=>{
       const before=JSON.parse(entry.before_json||'{}'),after=JSON.parse(entry.after_json||'{}');
       const changes=[...new Set([...Object.keys(before),...Object.keys(after)])].filter(key=>before[key]!==after[key]).map(key=>`<div><strong>${fields[key]||escape(key)}</strong><span>${escape(before[key]??'—')} → ${escape(after[key]??'—')}</span></div>`).join('');
@@ -150,6 +151,11 @@ function enrollmentBody() {
 async function refresh() {
   state = await api('state');
   authInfo.user = state.user;
+  if(state.user.role==='trainer') {
+    $('#brand-logo').hidden=!state.logo;$('#brand-fallback').hidden=Boolean(state.logo);
+    if(state.logo)$('#brand-logo').src=state.logo;
+    renderCoach();return;
+  }
   $('[name="month"]').value = state.now.slice(0,7);
   const selectedLocation = $('#location').value;
   $('#location').innerHTML = '<option value="">Wybierz lokalizację</option>' + state.locations.filter(location => location.status==='active' && state.groups.some(group => group.location_id === location.id)).map(location => `<option value="${location.id}">${escape(location.name)}</option>`).join('');
@@ -331,7 +337,7 @@ function renderTrainers() {
   $('#trainer-list').innerHTML = state.trainers.map(trainer => {
     const groups = state.groups.filter(g => state.group_trainers.some(a => a.group_id === g.id && a.trainer_id === trainer.id));
     const initials = trainer.name.split(/\s+/).slice(0, 2).map(part => part[0]).join('');
-    return `<article class="trainer-card"><div class="avatar">${escape(initials)}</div><h2>${escape(trainer.name)}</h2><div class="trainer-contact">${trainer.email ? escape(trainer.email) : 'Nie podano adresu email'}<br>${trainer.phone ? escape(trainer.phone) : 'Nie podano telefonu'}</div><div class="trainer-groups"><p>PRZYPISANE GRUPY · ${groups.length}</p>${groups.map(g => `<button class="trainer-group" data-assign="${g.id}">${escape(g.location)} / ${escape(g.name)}</button>`).join('') || '<p class="hint">Przypisz trenera z karty grupy w dziale „Grupy”.</p>'}</div></article>`;
+    return `<article class="trainer-card"><div class="avatar">${escape(initials)}</div><h2>${escape(trainer.name)}</h2><span class="pill">${{active:'Aktywny',inactive:'Nieaktywny',archived:'Archiwalny'}[trainer.status]}</span><div class="trainer-contact">${trainer.email ? escape(trainer.email) : 'Nie podano adresu email'}<br>${trainer.phone ? escape(trainer.phone) : 'Nie podano telefonu'}</div><div class="trainer-groups"><p>PRZYPISANE GRUPY · ${groups.length}</p>${groups.map(g => `<button class="trainer-group" data-assign="${g.id}">${escape(g.location)} / ${escape(g.name)}</button>`).join('') || '<p class="hint">Przypisz trenera z karty grupy w dziale „Grupy”.</p>'}</div><div class="trainer-actions"><button class="secondary" data-edit-trainer="${trainer.id}">Edytuj</button>${trainer.status==='active'&&!trainer.account_active?`<button class="secondary" data-trainer-account="${trainer.id}">${trainer.user_id?'Nowy link aktywacyjny':'Utwórz konto'}</button>`:''}</div><p class="hint">${trainer.user_id?(trainer.account_active?'Konto aktywowane':'Konto czeka na aktywację'):'Brak konta logowania'}</p></article>`;
   }).join('') || emptyState('users', 'Poznajmy Twój zespół', 'Dodaj trenerów, a następnie przypisz ich do odpowiednich grup.', '<button class="secondary" data-open="trainer-dialog">Dodaj trenera</button>');
 }
 
@@ -369,7 +375,10 @@ document.addEventListener('click', event => {
     window.location.hash = button.dataset.view;
     switchView(button.dataset.view);
   }
-  if (button.dataset.open) button.dataset.open === 'group-dialog' ? openGroup() : openDialog(button.dataset.open);
+  if (button.dataset.open) button.dataset.open === 'group-dialog' ? openGroup() : button.dataset.open === 'trainer-dialog' ? openTrainer() : openDialog(button.dataset.open);
+  if(button.dataset.editTrainer)openTrainer(Number(button.dataset.editTrainer));
+  if(button.dataset.trainerAccount)createTrainerAccount(Number(button.dataset.trainerAccount),button);
+  if(button.dataset.coachNote)openCoachNote(Number(button.dataset.coachNote));
   if (button.dataset.editGroup) openGroup(Number(button.dataset.editGroup));
   if (button.dataset.locationGroups) { selectedGroupLocation=Number(button.dataset.locationGroups); selectedAdminGroup=null; window.location.hash='groups'; renderCalendar(); }
   if (button.hasAttribute('data-back-locations')) {selectedGroupLocation=null;selectedAdminGroup=null;renderCalendar();}
@@ -449,11 +458,12 @@ $('#create-trainer').onsubmit = async event => {
   const form = event.target, button = form.querySelector('[type="submit"]');
   button.disabled = true;
   try {
-    await api('trainers', Object.fromEntries(new FormData(form)));
+    const body=Object.fromEntries(new FormData(form));
+    await api(body.id?'trainers/update':'trainers',{...body,id:body.id?Number(body.id):undefined});
     form.reset();
     $('#trainer-dialog').close();
     await refresh();
-    notice('Trener dodany. Możesz teraz przypisać go do grup.');
+    notice('Dane trenera zostały zapisane.');
   } catch (error) { notice(error.message, true); }
   finally { button.disabled = false; }
 };
@@ -654,6 +664,7 @@ function openAthleteDetail(id) {
     <section role="tabpanel" id="athlete-panel-data" aria-labelledby="athlete-tab-data" tabindex="0">
       <dl class="athlete-fields"><div><dt>Imię i nazwisko</dt><dd>${escape(athlete.name)}</dd></div><div><dt>Data urodzenia</dt><dd>${escape(athlete.birth_date||'Nie podano')}</dd></div>${admin?`<div class="athlete-note"><dt>Notatka administracyjna</dt><dd>${escape(athlete.notes||'Brak notatki')}</dd></div>`:''}</dl>
       <button class="secondary" data-edit-athlete="${id}">Edytuj dane</button>
+      ${admin?(state.trainer_notes||[]).filter(note=>note.athlete_id===id).map(note=>`<div class="profile-group"><h3>Notatka trenera · ${escape(state.trainers.find(trainer=>trainer.id===note.trainer_id)?.name||'Trener')}</h3><p class="coach-note-body">${escape(note.body||'Brak notatki')}</p></div>`).join(''):''}
     </section>
     <section role="tabpanel" id="athlete-panel-groups" aria-labelledby="athlete-tab-groups" tabindex="0" hidden>
       <div class="profile-section-heading"><h3>Przypisane grupy</h3><button class="secondary" data-enroll-athlete="${id}">Zapisz do grupy</button></div>
@@ -710,6 +721,7 @@ function renderMyChildren() {
 async function createInvitation(parentId) {
   try {
     const result = await api('parents/invite',{parent_id:parentId});
+    $('#invitation-title').textContent='Aktywacja konta rodzica';
     $('#invitation-link').value = window.location.origin + '/#activate/' + result.token;
     openDialog('invitation-dialog');
   } catch(error) { notice(error.message,true); }
@@ -767,7 +779,7 @@ $('#create-parent').onsubmit = async event => {
 function showAuth(mode='login') {
   for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
   authMode = authInfo.needs_setup ? 'setup' : window.location.hash.startsWith('#activate/') ? 'activate' : mode;
-  const details={login:['Zaloguj się.','Wejdź do panelu rodzica lub administratora.','Zaloguj się'],register:['Konto rodzica.','Po rejestracji dodasz dziecko i wybierzesz grupę.','Utwórz konto rodzica'],setup:['Pierwsze uruchomienie.','Utwórz konto administratora tej lokalnej instalacji. Rodzice będą rejestrować osobne konta.','Utwórz konto administratora'],activate:['Aktywuj konto.','Ustaw własne hasło do konta przygotowanego przez administratora.','Aktywuj konto']};
+  const details={login:['Zaloguj się.','Wejdź do panelu rodzica, trenera lub administratora.','Zaloguj się'],register:['Konto rodzica.','Po rejestracji dodasz dziecko i wybierzesz grupę.','Utwórz konto rodzica'],setup:['Pierwsze uruchomienie.','Utwórz konto administratora tej lokalnej instalacji. Rodzice będą rejestrować osobne konta.','Utwórz konto administratora'],activate:['Aktywuj konto.','Ustaw własne hasło do konta przygotowanego przez administratora.','Aktywuj konto']};
   const [title,description,submit]=details[authMode];
   $('#auth-title').textContent=title;
   $('#auth-description').textContent=description;
@@ -796,9 +808,63 @@ $('#auth-form').onsubmit=async event=>{
     if(authMode==='activate') body.token=window.location.hash.slice('#activate/'.length);
     await api('auth/'+authMode,body);
     form.reset();authInfo=await api('auth/status');
-    await refresh();window.location.hash=authInfo.user.role==='admin'?'groups':'parent';switchView(window.location.hash.slice(1));
+    await refresh();window.location.hash=authInfo.user.role==='admin'?'groups':authInfo.user.role==='trainer'?'coach':'parent';switchView(window.location.hash.slice(1));
   }catch(error){$('#auth-error').textContent=error.message;$('#auth-error').hidden=false;}finally{button.disabled=false;}
 };
 $('#logout').onclick=async()=>{
-  try{await api('auth/logout',{});authInfo.user=null;state=null;for(const id of ['my-children','athlete-list','athlete-detail','group-roster','enrollments','history','audit-list']) document.getElementById(id).replaceChildren();window.location.hash='auth';showAuth();}catch(error){notice(error.message,true);}
+  try{await api('auth/logout',{});window.location.assign('/');}catch(error){notice(error.message,true);}
+};
+
+
+function openTrainer(id=null) {
+  const form=$('#create-trainer'),trainer=state.trainers.find(entry=>entry.id===id);
+  form.reset();form.elements.id.value=id||'';
+  for(const key of ['name','email','phone'])form.elements[key].value=trainer?.[key]||'';
+  form.elements.status.value=trainer?.status||'active';
+  $('#trainer-status-label').hidden=!trainer;
+  $('#new-trainer-title').textContent=trainer?'Ustawienia trenera':'Nowy trener';
+  form.querySelector('[type=submit]').textContent=trainer?'Zapisz zmiany':'Dodaj trenera';
+  openDialog('trainer-dialog');
+}
+async function createTrainerAccount(id,button) {
+  button.disabled=true;
+  try {
+    const result=await api('trainers/account',{trainer_id:id});
+    await refresh();$('#invitation-title').textContent='Aktywacja konta trenera';
+    $('#invitation-link').value=window.location.origin+'/#activate/'+result.token;openDialog('invitation-dialog');
+  }catch(error){notice(error.message,true);}finally{button.disabled=false;}
+}
+function renderCoach() {
+  const selected=$('#coach-group').value;
+  $('#coach-group').innerHTML='<option value="">Wszystkie moje grupy</option>'+state.groups.map(group=>`<option value="${group.id}">${escape(group.location)} · ${escape(group.name)}</option>`).join('');
+  $('#coach-group').value=selected;
+  if(!$('#coach-month').value)$('#coach-month').value=state.now.slice(0,7);
+  const groups=state.groups.filter(group=>!$('#coach-group').value||String(group.id)===$('#coach-group').value);
+  const groupIds=new Set(groups.map(group=>group.id)),month=$('#coach-month').value;
+  const sessions=state.sessions.filter(session=>groupIds.has(session.group_id)&&session.starts_at.startsWith(month));
+  $('#coach-sessions').innerHTML=sessions.map(session=>{
+    const group=state.groups.find(group=>group.id===session.group_id);
+    return `<div class="entry"><strong>${escape(termLabel(session))}</strong><small>${escape(group.location)} · ${escape(group.name)}</small>${session.excluded?'<span class="pill">Zajęcia odwołane / dzień wolny</span>':''}</div>`;
+  }).join('')||'<p class="hint">Brak terminów w wybranym miesiącu.</p>';
+  $('#coach-roster').innerHTML=groups.map(group=>`<details class="coach-group" ${groups.length===1?'open':''}><summary>${escape(group.location)} · ${escape(group.name)} <span class="pill">${group.member_count} / ${group.capacity}</span></summary>${state.memberships.filter(member=>member.group_id===group.id).map(member=>{
+    const athlete=state.athletes.find(athlete=>athlete.id===member.athlete_id),parent=state.parents.find(parent=>parent.id===athlete.parent_id),note=state.trainer_notes.find(note=>note.athlete_id===athlete.id);
+    return `<div class="entry"><strong>${escape(athlete.name)}</strong> ${member.status==='trial'?'<span class="pill">Próba</span>':''}<small>Data urodzenia: ${escape(athlete.birth_date||'Nie podano')}<br>Rodzic: ${escape(parent?.name||'—')}<br>Telefon: ${escape(parent?.phone||'Nie podano')}<br>Email: ${escape(parent?.email||'Nie podano')}</small>${note?.body?`<p class="coach-note-body">${escape(note.body)}</p>`:''}<button class="secondary" data-coach-note="${athlete.id}">${note?.body?'Edytuj notatkę':'Dodaj notatkę'}</button></div>`;
+  }).join('')||'<p class="hint">Brak zawodników w grupie.</p>'}</details>`).join('')||'<p class="hint">Administrator nie przypisał Ci jeszcze grup.</p>';
+}
+function openCoachNote(id) {
+  const athlete=state.athletes.find(athlete=>athlete.id===id);
+  if(!athlete)return;
+  const form=$('#coach-note-form');form.elements.athlete_id.value=id;
+  form.elements.body.value=state.trainer_notes.find(note=>note.athlete_id===id)?.body||'';
+  $('#coach-note-title').textContent='Notatka · '+athlete.name;openDialog('coach-note-dialog');
+}
+$('#coach-group').onchange=renderCoach;
+$('#coach-month').onchange=renderCoach;
+$('#coach-refresh').onclick=()=>refresh().catch(error=>notice(error.message,true));
+$('#coach-note-form').onsubmit=async event=>{
+  event.preventDefault();const form=event.target,button=form.querySelector('[type=submit]');button.disabled=true;
+  try {
+    await api('trainer-notes',{athlete_id:Number(form.elements.athlete_id.value),body:form.elements.body.value});
+    $('#coach-note-dialog').close();await refresh();notice('Notatka zapisana.');
+  }catch(error){notice(error.message,true);}finally{button.disabled=false;}
 };

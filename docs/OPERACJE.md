@@ -24,7 +24,7 @@ DB_PATH=/tmp/ea-restore-20261020/evolution.sqlite LOGO_PATH=/tmp/ea-restore-2026
 ```
 
 Sprawdź logowanie, liczbę dzieci/grup/naliczeń, sumy sald i historię. Zatrzymaj test.
-Dopiero wtedy uruchom nowy kod na właściwej bazie. Migracja 1 jest addytywna,
+Dopiero wtedy uruchom nowy kod na właściwej bazie. Migracja 2 przed przebudową ograniczenia ról tworzy snapshot obok DB (`*.before-v2-*.sqlite`, 0600), zachowuje rekordy i sprawdza FK. Nie zastępuje to pełnej kopii z logo. Szczegóły i wycofanie: [ETAP-2A.md](ETAP-2A.md). Migracja 1 jest addytywna,
 transakcyjna i rejestrowana w `schema_migrations`; nie kasuje danych.
 
 ## Wycofanie
@@ -51,6 +51,7 @@ python3 test/smoke.py
 python3 test/accounts.py
 python3 test/public_signup.py
 python3 test/foundations.py
+python3 test/trainers.py
 ```
 
 Każdy test integracyjny używa osobnej tymczasowej bazy, portu i fikcyjnych danych.

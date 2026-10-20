@@ -21,6 +21,7 @@ async function matches(password, stored) {
   const actual = await scrypt(typeof password === 'string' ? password.slice(0, 200) : '', salt, 64);
   return timingSafeEqual(actual, Buffer.from(hash, 'hex')) && Boolean(stored);
 }
+// Bootstrap the original schema; migration 2 expands the stored CHECK to three roles.
 export function createAuth(db, onEvent = () => {}) {
   db.exec(`CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, phone TEXT NOT NULL DEFAULT '', role TEXT NOT NULL CHECK(role IN ('admin','parent')), password_hash TEXT, created_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS auth_sessions(token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), expires_at INTEGER NOT NULL);
@@ -30,7 +31,9 @@ export function createAuth(db, onEvent = () => {}) {
   function user(req) {
     const token = (req.headers.cookie || '').split(';').map(part => part.trim()).find(part => part.startsWith('ea_session='))?.slice(11);
     if (!token || !/^[a-f0-9]{64}$/.test(token)) return null;
-    return safeUser(db.prepare("SELECT u.* FROM users u JOIN auth_sessions s ON s.user_id=u.id WHERE s.token_hash=? AND s.expires_at>? AND u.access_status='active'").get(digest(token), Date.now()));
+    const account=db.prepare("SELECT u.* FROM users u JOIN auth_sessions s ON s.user_id=u.id WHERE s.token_hash=? AND s.expires_at>? AND u.access_status='active'").get(digest(token), Date.now());
+    if(account?.role==='trainer'&&!db.prepare("SELECT id FROM trainers WHERE user_id=? AND status='active'").get(account.id))return null;
+    return safeUser(account);
   }
   function atomic(work) {
     db.exec('SAVEPOINT auth_action');
@@ -39,6 +42,8 @@ export function createAuth(db, onEvent = () => {}) {
   }
   function session(res, userId) {
     if (!db.prepare("SELECT id FROM users WHERE id=? AND access_status='active'").get(userId)) throw Error('Konto nie ma aktywnego dostępu.');
+    const account=db.prepare('SELECT role FROM users WHERE id=?').get(userId);
+    if(account.role==='trainer'&&!db.prepare("SELECT id FROM trainers WHERE user_id=? AND status='active'").get(userId))throw Object.assign(Error('Brak aktywnego profilu trenera.'),{status:403});
     const token = randomBytes(32).toString('hex');
     atomic(()=>{
       db.prepare('DELETE FROM auth_sessions WHERE expires_at<?').run(Date.now());
@@ -47,11 +52,11 @@ export function createAuth(db, onEvent = () => {}) {
     });
     res.setHeader('Set-Cookie', `ea_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800${process.env.COOKIE_SECURE === '1' ? '; Secure' : ''}`);
   }
-  function invite(userId) {
-    const parent = db.prepare("SELECT * FROM users WHERE id=? AND role='parent'").get(userId);
-    if (!parent) throw Error('Nie znaleziono rodzica.');
-    if (parent.access_status !== 'active') throw Error('Najpierw odblokuj dostęp rodzica.');
-    if (parent.password_hash) throw Error('Rodzic ma już aktywne konto.');
+  function invite(userId, expectedRole='parent') {
+    const parent = db.prepare("SELECT * FROM users WHERE id=? AND role=?").get(userId,expectedRole);
+    if (!parent) throw Error('Nie znaleziono konta do aktywacji.');
+    if (parent.access_status !== 'active') throw Error('Najpierw odblokuj dostęp do konta.');
+    if (parent.password_hash) throw Error('Konto jest już aktywowane.');
     const token = randomBytes(32).toString('hex');
     atomic(()=>{
       db.prepare('DELETE FROM invitations WHERE user_id=?').run(userId);
@@ -98,9 +103,11 @@ export function createAuth(db, onEvent = () => {}) {
       const email = emailAddress(body.email);
       const account = db.prepare('SELECT * FROM users WHERE email=?').get(email);
       if (!await matches(body.password, account?.password_hash)) return send(401, { error: 'Nieprawidłowy email lub hasło. Dla przeniesionych danych potrzebny jest link aktywacyjny od administratora.' });
-      if(db.prepare('SELECT access_status FROM users WHERE id=?').get(account.id)?.access_status!=='active') return send(403,{error:'Dostęp do konta został zablokowany. Skontaktuj się z administratorem.'});
+      const current=db.prepare('SELECT * FROM users WHERE id=?').get(account.id);
+      if(!current||current.email!==email||current.password_hash!==account.password_hash)return send(401,{error:'Dane logowania zmieniły się. Zaloguj się ponownie.'});
+      if(current.access_status!=='active') return send(403,{error:'Dostęp do konta został zablokowany. Skontaktuj się z administratorem.'});
       session(res, account.id);
-      return send(200, { user: safeUser(account) });
+      return send(200, { user: safeUser(current) });
     }
     if (path === '/api/auth/activate') {
       const invitation = db.prepare('SELECT * FROM invitations WHERE token_hash=? AND expires_at>?').get(digest(String(body.token)), Date.now());

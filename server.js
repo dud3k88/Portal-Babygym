@@ -1,11 +1,12 @@
 import http from 'node:http';
-import { migrateFoundations } from './migrations.js';
+import { migrateFoundations, migrateTrainerAccess } from './migrations.js';
 import { configureAudit, withRequestContext, requestContext, recordAccess } from './audit.js';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { calculateCharge, warsawNow, enrollmentMonth } from './billing.js';
 import { generateSchedule, validDate, isExcluded } from './schedule.js';
 import { createAuth, emailAddress, passwordHash } from './auth.js';
+import { createTrainerService } from './trainers.js';
 mkdirSync('data', { recursive: true });
 const logoPath = process.env.LOGO_PATH || 'data/logo';
 const db = new DatabaseSync(process.env.DB_PATH || 'data/evolution.sqlite');
@@ -80,6 +81,8 @@ if (!legacyBackfillDone) for(const e of all('SELECT * FROM enrollments WHERE id 
  for(const term of terms) db.prepare('INSERT OR IGNORE INTO enrollment_sessions VALUES(?,?,?)').run(e.id,term.id,e.trial_id?e.amount:term.price);
 }
 migrateFoundations(db);
+migrateTrainerAccess(db,process.env.DB_PATH || 'data/evolution.sqlite');
+const trainerService=createTrainerService(db,auth);
 function chargedTotals() {
  const active=new Set(sessionsWithStatus().filter(s=>!s.excluded).map(s=>s.id));
  const totals=new Map();
@@ -133,6 +136,7 @@ function athleteById(id,user) {
  return athlete;
 }
 function stateFor(user) {
+ if(user.role==='trainer')return trainerService.state(user,sessionsWithStatus(),existsSync(logoPath)?'/logo?v='+Date.now():null);
  const admin=user.role==='admin';
  const athletes=admin?all('SELECT * FROM athletes ORDER BY name'):all('SELECT id,parent_id,name,birth_date,created_at FROM athletes WHERE parent_id=? ORDER BY name',user.id);
  const ids=new Set(athletes.map(a=>a.id));
@@ -145,7 +149,7 @@ function stateFor(user) {
  const trainerLinks=all('SELECT * FROM group_trainers').filter(gt=>admin||visibleIds.has(gt.group_id));
  const trainerIds=new Set(trainerLinks.map(gt=>gt.trainer_id));
  const visibleLocations=new Set(visibleGroups.map(g=>g.location_id));
- return {user,athletes,parents:admin?all("SELECT id,name,email,phone,access_status,password_hash IS NOT NULL AS active FROM users WHERE role='parent' ORDER BY name"):[user],memberships:all('SELECT * FROM memberships').filter(m=>admin||ids.has(m.athlete_id)),locations:admin?all('SELECT * FROM locations ORDER BY name'):all('SELECT id,name,status FROM locations ORDER BY name').filter(l=>availableLocations.has(l.id)||visibleLocations.has(l.id)),trainers:admin?all('SELECT * FROM trainers ORDER BY name'):all('SELECT id,name FROM trainers ORDER BY name').filter(t=>trainerIds.has(t.id)),group_trainers:trainerLinks,logo:existsSync(logoPath)?'/logo?v='+Date.now():null,groups:visibleGroups,sessions:sessionsWithStatus().filter(s=>admin||ownGroupIds.has(s.group_id)||(visibleIds.has(s.group_id)&&s.starts_at>=warsawNow())),exclusions:admin?all('SELECT * FROM exclusions ORDER BY start_date'):[],enrollments,adjustments:all('SELECT * FROM adjustments ORDER BY id DESC').filter(a=>admin||enrollmentIds.has(a.enrollment_id)),now:warsawNow()};
+ return {user,athletes,parents:admin?all("SELECT id,name,email,phone,access_status,password_hash IS NOT NULL AS active FROM users WHERE role='parent' ORDER BY name"):[user],memberships:all('SELECT * FROM memberships').filter(m=>admin||ids.has(m.athlete_id)),locations:admin?all('SELECT * FROM locations ORDER BY name'):all('SELECT id,name,status FROM locations ORDER BY name').filter(l=>availableLocations.has(l.id)||visibleLocations.has(l.id)),trainer_notes:admin?all('SELECT * FROM trainer_notes'):[],trainers:admin?all('SELECT t.*,u.password_hash IS NOT NULL AS account_active FROM trainers t LEFT JOIN users u ON u.id=t.user_id ORDER BY t.name'):all('SELECT id,name FROM trainers ORDER BY name').filter(t=>trainerIds.has(t.id)),group_trainers:trainerLinks,logo:existsSync(logoPath)?'/logo?v='+Date.now():null,groups:visibleGroups,sessions:sessionsWithStatus().filter(s=>admin||ownGroupIds.has(s.group_id)||(visibleIds.has(s.group_id)&&s.starts_at>=warsawNow())),exclusions:admin?all('SELECT * FROM exclusions ORDER BY start_date'):[],enrollments,adjustments:all('SELECT * FROM adjustments ORDER BY id DESC').filter(a=>admin||enrollmentIds.has(a.enrollment_id)),now:warsawNow()};
 }
 async function readJSON(req) {
  if(!req.headers['content-type']?.startsWith('application/json')) throw Object.assign(Error('Wymagany format JSON.'),{status:415});
@@ -218,9 +222,10 @@ const server = http.createServer(withRequestContext(async (req,res) => {
   const user=auth.user(req);
   if(url.pathname.startsWith('/api/')) {
    if(!user) return send(401,{error:'Zaloguj się, aby kontynuować.'});
-   if (!['admin','parent'].includes(user.role)) return send(403,{error:'Brak dostępu dla tej roli.'});
+   if (!['admin','trainer','parent'].includes(user.role)) return send(403,{error:'Brak dostępu dla tej roli.'});
    const parentPaths=['/api/state','/api/athletes','/api/athletes/update','/api/quote','/api/enrollments'];
-   if(user.role!=='admin'&&!parentPaths.includes(url.pathname)) return send(403,{error:'Ta operacja wymaga konta administratora.'});
+   const allowedPaths=user.role==='trainer'?['/api/state','/api/trainer-notes']:parentPaths;
+   if(user.role!=='admin'&&!allowedPaths.includes(url.pathname)) return send(403,{error:'Ta operacja wymaga konta administratora.'});
   }
   if(req.method==='GET'&&url.pathname==='/api/audit') {
    const before=url.searchParams.get('before');
@@ -248,6 +253,12 @@ const server = http.createServer(withRequestContext(async (req,res) => {
   }
   if (req.method === 'POST' && url.pathname.startsWith('/api/')) {
    const b=await readJSON(req);
+   if(url.pathname==='/api/trainer-notes') {
+    if(user.role!=='trainer')return send(403,{error:'Notatkę zapisuje jej autor — trener.'});
+    return send(200,trainerService.saveNote(user,b));
+   }
+   if(url.pathname==='/api/trainers/account')return send(200,trainerService.account(b));
+   if(url.pathname==='/api/trainers/update')return send(200,trainerService.update(b));
    if(url.pathname==='/api/parents') {
     const name=text(b.name,'imię i nazwisko rodzica'),email=emailAddress(b.email),phone=b.phone?text(b.phone,'telefon'):'';
     if(db.prepare('SELECT id FROM users WHERE email=?').get(email)) throw Error('Rodzic z tym adresem email już istnieje. Wybierz go z listy.');
