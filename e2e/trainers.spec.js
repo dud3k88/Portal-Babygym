@@ -55,6 +55,9 @@ test('administrator aktywuje konto trenera; własne grupy, notatka i blokada; li
   await coachPage.selectOption('#coach-group','');
   expect(await coachPage.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
   await coachPage.screenshot({path:testInfo.outputPath('panel-trenera-mobile.png'),fullPage:true});
+  await coachPage.locator('nav [data-view=calendar]').click();
+  await expect(coachPage.locator('#calendar-range')).not.toBeEmpty();
+  await coachPage.locator('nav [data-view=coach]').click();
   // Admin sees the separate note in the existing child record.
   await page.locator('#invitation-dialog [data-close]').click();await page.locator('nav [data-view=athletes]').click();
   await page.reload();await page.locator('[data-athlete]').first().click();await expect(page.locator('#athlete-panel-data')).toContainText('Ćwiczenia równowagi');await page.locator('#athlete-detail-dialog [data-close]').click();

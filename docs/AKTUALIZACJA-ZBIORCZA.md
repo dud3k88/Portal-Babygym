@@ -175,3 +175,24 @@ Walidacja tego etapu: 36 testów Node (35 w pełnym przebiegu oraz dodany test
 migracji), integracje operations/foundations/public_signup/admissions i 6 scenariuszy
 Playwright na Chromium. Sprawdzono zapis bez odpowiedzi, zmianę terminu i filtrowanie
 w przeglądarce, uprawnienia, historyczne dane, rollback i ponowne uruchomienie migracji.
+
+## Uporządkowany panel administracyjny
+
+Menu dzieli się na organizację, rozliczenia, współpracę, ustawienia i panel rodzica.
+Panel ma ciemne menu, białą przestrzeń roboczą, jednolitą typografię i akcenty Evolution
+Academy. Publiczny formularz zapisu zachowuje osobny wygląd.
+
+Kartoteka pokazuje tabelę z jednym wierszem na zawodnika, datą urodzenia, kontaktem
+rodzica, statusem należności i przyciskiem otwarcia szczegółów. Istniejące wyszukiwanie,
+filtry i paginacja nadal działają. Na telefonie tabela przewija się wewnątrz sekcji.
+Lista trenerów ma zwarte wiersze oraz rozwijane przypisania do grup.
+
+Kalendarz ma kolumny dni dla tygodnia, osobny widok dnia oraz miesięczną listę
+pogrupowaną według dat. To widok kafelków, bez osi godzinowej i przeciągania zajęć.
+Kliknięcie zajęć otwiera dziennik. Dostępne są filtry lokalizacji/grupy/trenera,
+przejście do poprzedniego/następnego okresu oraz przycisk „Dzisiaj”. Zakresy dłuższe
+niż 32 dni są prezentowane jako lista według dat, bez pomijania zajęć.
+
+Walidacja: 6 scenariuszy Playwright, w tym tabela z jednym wpisem, tygodniowy kalendarz,
+otwieranie dziennika, nawigacja dat, dostęp trenera i brak przewijania całej strony
+w poziomie na telefonie. Zmiana nie wymaga migracji bazy.

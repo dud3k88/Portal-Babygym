@@ -457,7 +457,7 @@ function renderTrainers() {
   $('#trainer-list').innerHTML = state.trainers.map(trainer => {
     const groups = state.groups.filter(g => state.group_trainers.some(a => a.group_id === g.id && a.trainer_id === trainer.id));
     const initials = trainer.name.split(/\s+/).slice(0, 2).map(part => part[0]).join('');
-    return `<article class="trainer-card"><div class="avatar">${escape(initials)}</div><h2>${escape(trainer.name)}</h2><span class="pill">${{active:'Aktywny',inactive:'Nieaktywny',archived:'Archiwalny'}[trainer.status]}</span><div class="trainer-contact">${trainer.email ? escape(trainer.email) : 'Nie podano adresu email'}<br>${trainer.phone ? escape(trainer.phone) : 'Nie podano telefonu'}</div><div class="trainer-groups"><p>PRZYPISANE GRUPY · ${groups.length}</p>${groups.map(g => `<button class="trainer-group" data-assign="${g.id}">${escape(g.location)} / ${escape(g.name)}</button>`).join('') || '<p class="hint">Przypisz trenera z karty grupy w dziale „Grupy”.</p>'}</div><div class="trainer-actions"><button class="secondary" data-edit-trainer="${trainer.id}">Edytuj</button>${trainer.status==='active'&&!trainer.account_active?`<button class="secondary" data-trainer-account="${trainer.id}">${trainer.user_id?'Nowy link aktywacyjny':'Utwórz konto'}</button>`:''}</div><p class="hint">${trainer.user_id?(trainer.account_active?'Konto aktywowane':'Konto czeka na aktywację'):'Brak konta logowania'}</p></article>`;
+    return `<article class="trainer-card trainer-record"><div class="trainer-record-heading"><div class="avatar">${escape(initials)}</div><div><h2>${escape(trainer.name)}</h2><span class="pill">${{active:'Aktywny',inactive:'Nieaktywny',archived:'Archiwalny'}[trainer.status]}</span></div><div class="trainer-contact">${escape(trainer.email||'Brak adresu email')}<br>${escape(trainer.phone||'Brak telefonu')}</div><div class="trainer-actions"><button class="secondary" data-edit-trainer="${trainer.id}">Edytuj</button>${trainer.status==='active'&&!trainer.account_active?`<button class="secondary" data-trainer-account="${trainer.id}">${trainer.user_id?'Nowy link aktywacyjny':'Utwórz konto'}</button>`:''}</div></div><details class="trainer-record-details"><summary>Grupy i dostęp do panelu <span>${groups.length} grup</span></summary><div class="trainer-groups">${groups.map(g=>`<button class="trainer-group" data-assign="${g.id}">${escape(g.location)} / ${escape(g.name)}</button>`).join('')||'<p class="hint">Brak przypisanych grup.</p>'}</div></details><p class="hint account-state">${trainer.user_id?(trainer.account_active?'Konto aktywowane':'Konto czeka na aktywację'):'Brak konta logowania'}</p></article>`;
   }).join('') || emptyState('users', 'Poznajmy Twój zespół', 'Dodaj trenerów, a następnie przypisz ich do odpowiednich grup.', '<button class="secondary" data-open="trainer-dialog">Dodaj trenera</button>');
 }
 
@@ -762,8 +762,17 @@ function renderAthletes() {
   }).sort((a,b)=>a.name.localeCompare(b.name,'pl') || a.id-b.id);
   const visible = directorySlice('athlete',matches);
   $('#athlete-list').innerHTML = `<p class="athlete-count">Liczba zawodników: ${matches.length} z ${state.athletes.length}</p>` + (visible.length
-    ? `<div class="athlete-directory">${visible.map(rosterRow).join('')}</div>`
+    ? `<div class="table-scroll"><table class="directory-table"><thead><tr><th scope="col">Zawodnik</th><th scope="col">Data urodzenia</th><th scope="col">Rodzic / kontakt</th><th scope="col">Rozliczenia</th><th scope="col">Kartoteka</th></tr></thead><tbody>${visible.map(athleteTableRow).join('')}</tbody></table></div>`
     : emptyState('users','Brak zawodników','Brak zawodników pasujących do wybranych filtrów.'));
+}
+
+function athleteTableRow(athlete) {
+ const parent=state.parents.find(p=>p.id===athlete.parent_id);
+ const charges=state.enrollments.filter(e=>e.athlete_id===athlete.id);
+ const overdue=charges.reduce((sum,e)=>sum+e.overdue_amount,0);
+ const balance=charges.reduce((sum,e)=>sum+e.balance,0);
+ const status=overdue>0?`<span class="status-badge danger">Po terminie: ${money(overdue)}</span>`:balance>0?`<span class="status-badge">Do zapłaty: ${money(balance)}</span>`:balance<0?`<span class="status-badge success">Nadpłata: ${money(-balance)}</span>`:charges.length?'<span class="status-badge success">Rozliczone</span>':'<span class="status-badge neutral">Brak należności</span>';
+ return `<tr><td><strong>${escape(athlete.name)}</strong><small>#${athlete.id}</small></td><td>${athlete.birth_date?escape(athlete.birth_date.split('-').reverse().join('.')):'—'}</td><td>${escape(parent?.name||'—')}<small>${escape(parent?.email||'')}<br>${escape(parent?.phone||'')}</small></td><td>${status}</td><td><button class="secondary" data-athlete="${athlete.id}" aria-label="Kartoteka: ${escape(athlete.name)}">Otwórz →</button></td></tr>`;
 }
 
 function updateAthleteSelects() {
@@ -1203,15 +1212,31 @@ $('#admission-confirm').onsubmit=async event=>{
 };
 
 let lessonDetail;
+let calendarRequest=0;
 async function loadCalendar() {
  if(!state)return;
  const form=$('#lesson-filters');
+ const request=++calendarRequest;
  if(!form.elements.from.value){form.elements.from.value=state.now.slice(0,7)+'-01';const d=new Date(state.now.slice(0,7)+'-01T12:00:00Z');d.setUTCMonth(d.getUTCMonth()+1,0);form.elements.to.value=d.toISOString().slice(0,10);}
  const selected=form.elements.group_id.value;form.elements.group_id.innerHTML='<option value="">Wszystkie grupy</option>'+state.groups.map(g=>`<option value="${g.id}">${escape(g.name)}</option>`).join('');form.elements.group_id.value=selected;
- try {const result=await api('calendar?'+new URLSearchParams(new FormData(form)));$('#lesson-list').innerHTML=result.items.map(s=>`<div class="entry exclusion-entry"><div><strong>${escape(s.group_name)} · ${escape(s.location)}</strong><small>${escape(termLabel(s))} · ${escape(s.trainers.map(t=>t.name).join(', '))}</small><small>${s.excluded?'Odwołane / dzień wolny':s.completed?'Zrealizowane':`Brakujące obecności: ${s.missing}`}</small></div><button class="secondary" data-lesson="${s.id}">Dziennik</button></div>`).join('')||'<p>Brak zajęć w wybranym zakresie.</p>';}catch(error){notice(error.message,true);}
+ for(const [name,items] of [['location_id',state.locations],['trainer_id',state.trainers||(state.trainer?[state.trainer]:[])]]){const select=form.elements[name],value=select.value;select.innerHTML='<option value="">Wszystkie</option>'+items.map(item=>`<option value="${item.id}">${escape(item.name)}</option>`).join('');select.value=value;}
+ try {const result=await api('calendar?'+new URLSearchParams(new FormData(form)));if(request===calendarRequest)renderLessonCalendar(result.items,form.elements.from.value,form.elements.to.value,form.elements.view.value);}catch(error){notice(error.message,true);}
 }
 $('#lesson-filters').onsubmit=e=>{e.preventDefault();loadCalendar();};
-$('#lesson-filters [name=view]').onchange=()=>{const f=$('#lesson-filters'),d=new Date(f.elements.from.value+'T12:00:00Z');if(f.elements.view.value==='month')d.setUTCMonth(d.getUTCMonth()+1,0);else d.setUTCDate(d.getUTCDate()+(f.elements.view.value==='week'?6:0));f.elements.to.value=d.toISOString().slice(0,10);loadCalendar();};
+function calendarEnd(from,view){const d=new Date(from+'T12:00:00Z');if(view==='month')d.setUTCMonth(d.getUTCMonth()+1,0);else d.setUTCDate(d.getUTCDate()+(view==='week'?6:0));return d.toISOString().slice(0,10);}
+$('#lesson-filters [name=view]').onchange=()=>{const f=$('#lesson-filters');f.elements.to.value=calendarEnd(f.elements.from.value,f.elements.view.value);loadCalendar();};
+$('#calendar-today').onclick=()=>{const f=$('#lesson-filters');f.elements.from.value=state.now.slice(0,10);f.elements.to.value=calendarEnd(f.elements.from.value,f.elements.view.value);loadCalendar();};
+document.addEventListener('click',event=>{const button=event.target.closest('[data-calendar-move]');if(!button)return;const f=$('#lesson-filters'),d=new Date(f.elements.from.value+'T12:00:00Z'),step=Number(button.dataset.calendarMove);if(f.elements.view.value==='month'){d.setUTCDate(1);d.setUTCMonth(d.getUTCMonth()+step);}else d.setUTCDate(d.getUTCDate()+step*(f.elements.view.value==='week'?7:1));f.elements.from.value=d.toISOString().slice(0,10);f.elements.to.value=calendarEnd(f.elements.from.value,f.elements.view.value);loadCalendar();});
+function renderLessonCalendar(items,from,to,view){
+ $('#calendar-range').textContent=from.split('-').reverse().join('.')+' — '+to.split('-').reverse().join('.');
+ const byDate=new Map();items.sort((a,b)=>a.starts_at.localeCompare(b.starts_at));
+ for(const item of items){const date=item.starts_at.slice(0,10);if(!byDate.has(date))byDate.set(date,[]);byDate.get(date).push(item);}
+ const compact=view==='month'||(Date.parse(to)-Date.parse(from))/86400000>31;
+ const days=[];const cursor=new Date(from+'T12:00:00Z');while(!compact&&cursor.toISOString().slice(0,10)<=to){days.push(cursor.toISOString().slice(0,10));cursor.setUTCDate(cursor.getUTCDate()+1);}
+ const shown=compact?[...byDate.keys()]:days;
+ $('#lesson-list').innerHTML=shown.length?`<div class="lesson-board ${compact?'agenda-board':view==='day'?'day-board':'week-board'}">${shown.map(date=>`<section class="lesson-day"><h3>${escape(new Date(date+'T12:00:00Z').toLocaleDateString('pl-PL',{weekday:'short',day:'numeric',month:'short',timeZone:'UTC'}))}${date===state.now.slice(0,10)?'<span class="today-marker">Dzisiaj</span>':''}</h3><div>${(byDate.get(date)||[]).map(s=>`<button class="lesson-event ${s.excluded?'cancelled':s.completed?'completed':''}" data-lesson="${s.id}"><span class="lesson-time">${escape(s.starts_at.slice(11,16))}${s.ends_at?'–'+escape(s.ends_at.slice(11,16)):''}</span><strong>${escape(s.group_name)}</strong><span>${escape(s.location)}</span><small>${escape(s.trainers.map(t=>t.name).join(', ')||'Bez trenera')}</small><span class="lesson-status">${s.excluded?'Odwołane / dzień wolny':s.completed?'Zrealizowane':`Brakujące obecności: ${s.missing}`}</span><span class="lesson-open">Otwórz dziennik →</span></button>`).join('')||'<p class="hint">Brak zajęć</p>'}</div></section>`).join('')}</div>`:'<p class="hint">Brak zajęć w wybranym zakresie.</p>';
+}
+
 async function openLesson(id){
  try{lessonDetail=await api('calendar/detail?id='+id);const {session,children,completion}=lessonDetail;const parent=authInfo.user.role==='parent';
  $('#lesson-roster').innerHTML=`<p>${escape(termLabel(session))}</p>${children.map(a=>`<div class="entry"><strong>${escape(a.name)}</strong><small>${a.reported_absent?'Rodzic zgłosił nieobecność · ':''}${{present:'Obecny',absent:'Nieobecny',unmarked:'Niezgłoszony'}[a.attendance]} · Pieczątki za obecność: ${a.stamps}</small>${parent?`<button class="secondary" data-absence="${a.id}" data-active="${!a.reported_absent}">${a.reported_absent?'Cofnij zgłoszenie':'Zgłoś nieobecność'}</button>`:`<label>Obecność<select data-attendance="${a.id}">${[['unmarked','Niezgłoszony'],['present','Obecny'],['absent','Nieobecny']].map(([v,n])=>`<option value="${v}" ${a.attendance===v?'selected':''}>${n}</option>`).join('')}</select></label>`}</div>`).join('')}${!parent?`<button class="primary" data-complete-lesson="${!completion?.completed}">${completion?.completed?'Cofnij realizację':'Potwierdź realizację zajęć'}</button>`:''}${authInfo.user.role==='admin'?`<div class="trainer-actions"><button class="secondary" data-cancel-lesson="${!session.excluded}">Odwołaj / przywróć termin</button><button class="secondary" data-move-lesson>Przesuń termin</button><button class="secondary" data-substitute-lesson>Przypisz zastępstwo</button></div>`:''}`;

@@ -21,7 +21,7 @@ test.afterAll(async()=>{
  if(folder)await rm(folder,{recursive:true,force:true});
 });
 
-test('placówka, publiczny zapis, blokada rodzica, dziennik i mobilny panel',async({page,browser})=>{
+test('placówka, publiczny zapis, blokada rodzica, dziennik i mobilny panel',async({page,browser},testInfo)=>{
  const errors=[];page.on('pageerror',error=>errors.push(error.message));
  async function api(context,path,data){
   const response=await context.request.post(origin+'/api/'+path,{data});
@@ -73,6 +73,8 @@ test('placówka, publiczny zapis, blokada rodzica, dziennik i mobilny panel',asy
   await page.selectOption('#billing-filter-status','pending');
   await expect(page.locator('#enrollments')).toContainText('Jan Testowy');
   await page.locator('nav [data-view=athletes]').click();
+  await expect(page.locator('.directory-table tbody tr')).toHaveCount(1);
+  await page.screenshot({path:testInfo.outputPath('zawodnicy.png'),fullPage:true});
   await page.locator('#athlete-list [data-athlete]').click();await page.locator('[data-athlete-tab=parent]').click();
   page.once('dialog',dialog=>dialog.accept());await page.locator('[data-parent-access]').click();
   await expect(page.locator('#athlete-panel-parent')).toContainText('Zablokowane');
@@ -80,6 +82,20 @@ test('placówka, publiczny zapis, blokada rodzica, dziennik i mobilny panel',asy
   page.once('dialog',dialog=>dialog.accept());await page.locator('[data-parent-access]').click();
   await expect(page.locator('#athlete-panel-parent')).toContainText('Aktywne');
   await page.locator('#athlete-detail-dialog [data-close]').click();
+  await page.locator('nav [data-view=calendar]').click();
+  await page.locator('#lesson-filters [name=from]').fill('2099-09-08');
+  await page.selectOption('#lesson-filters [name=view]','week');
+  await expect(page.locator('.lesson-event')).toHaveCount(1);
+  await expect(page.locator('.lesson-day')).toHaveCount(7);
+  await page.screenshot({path:testInfo.outputPath('kalendarz.png'),fullPage:true});
+  await page.locator('.lesson-event').click();
+  await expect(page.locator('#lesson-dialog')).toBeVisible();
+  await page.locator('#lesson-dialog [data-close]').click();
+  await page.locator('[data-calendar-move="1"]').click();
+  await expect(page.locator('#calendar-range')).toContainText('15.09.2099');
+  await expect(page.locator('.lesson-event')).toHaveCount(0);
+  await page.locator('#calendar-today').click();
+  await expect(page.locator('#calendar-range')).toContainText('01.09.2099');
   await page.locator('nav [data-view=locations]').click();await page.locator('[data-edit-location]').click();
   await form.locator('[name=status]').selectOption('archived');await form.locator('button[type=submit]').click();
   await expect(page.locator('#location-list')).toContainText('Archiwalna');
