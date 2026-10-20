@@ -315,7 +315,7 @@ const server = http.createServer(withRequestContext(async (req,res) => {
    if(!user) return send(401,{error:'Zaloguj się, aby kontynuować.'});
    if (!['admin','trainer','parent'].includes(user.role)) return send(403,{error:'Brak dostępu dla tej roli.'});
    const calendarPaths=['/api/library','/api/library/file','/api/library/pdf','/api/library/card','/api/library/stamps','/api/workspace','/api/workspace/thread','/api/workspace/message','/api/workspace/read','/api/workspace/consent','/api/workspace/issue','/api/calendar','/api/calendar/detail','/api/calendar/absence','/api/calendar/mark','/api/calendar/complete'];
-   const parentPaths=[...calendarPaths,'/api/state','/api/athletes','/api/athletes/update','/api/quote','/api/enrollments','/api/memberships/withdraw','/api/memberships/cancel-withdrawal','/api/waiting/join','/api/waiting/cancel','/api/waiting/accept','/api/trials/quote','/api/trials/convert',...['invite','preview','accept','revoke','cancel'].map(action=>'/api/guardians/'+action)];
+   const parentPaths=['/api/calendar/athlete',...calendarPaths,'/api/state','/api/athletes','/api/athletes/update','/api/quote','/api/enrollments','/api/memberships/withdraw','/api/memberships/cancel-withdrawal','/api/waiting/join','/api/waiting/cancel','/api/waiting/accept','/api/trials/quote','/api/trials/convert',...['invite','preview','accept','revoke','cancel'].map(action=>'/api/guardians/'+action)];
    const allowedPaths=user.role==='trainer'?['/api/state','/api/trainer-notes','/api/business','/api/business/wages','/api/business/availability','/api/library/upload','/api/library/plan','/api/library/assess',...calendarPaths]:parentPaths;
    if(user.role!=='admin'&&!allowedPaths.includes(url.pathname)) return send(403,{error:'Ta operacja wymaga konta administratora.'});
   }
@@ -347,6 +347,7 @@ const server = http.createServer(withRequestContext(async (req,res) => {
   if(req.method==='GET'&&url.pathname==='/api/workspace')return send(200,workspaceService.state(user));
   if(req.method==='GET'&&url.pathname==='/api/workspace/thread')return send(200,workspaceService.thread(Number(url.searchParams.get('id')),user));
   if(req.method==='GET'&&url.pathname==='/api/calendar')return send(200,calendarService.list(user,url.searchParams));
+  if(req.method==='GET'&&url.pathname==='/api/calendar/athlete')return send(200,calendarService.athleteHistory(user,Number(url.searchParams.get('id'))));
   if(req.method==='GET'&&url.pathname==='/api/calendar/detail')return send(200,calendarService.detail(user,Number(url.searchParams.get('id'))));
   if(req.method==='GET'&&url.pathname==='/api/users')return send(200,userService.list(url.searchParams));
   if(req.method==='GET'&&url.pathname==='/api/audit') {
@@ -604,7 +605,7 @@ const server = http.createServer(withRequestContext(async (req,res) => {
    }
    return send(404,{error:'Nie znaleziono operacji.'});
   }
-  if(req.method==='GET' && ['/', '/zapisy', '/zapisy/', '/public-registration.js', '/public-registration.css', '/app.js', '/style.css', '/brand.css', '/panel.css', '/fonts/baloo-bhai-2.ttf', '/fonts/open-sans.ttf'].includes(url.pathname)) {
+  if(req.method==='GET' && ['/', '/zapisy', '/zapisy/', '/public-registration.js', '/public-registration.css', '/app.js', '/style.css', '/brand.css', '/panel.css', '/timetable.js', '/fonts/baloo-bhai-2.ttf', '/fonts/open-sans.ttf'].includes(url.pathname)) {
    const name=url.pathname==='/'?'index.html':url.pathname==='/zapisy'||url.pathname==='/zapisy/'?'public-registration.html':url.pathname.slice(1);
    res.writeHead(200,{'Content-Type':name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':name.endsWith('.ttf')?'font/ttf':'text/html; charset=utf-8'});return res.end(readFileSync(new URL('./public/'+name,import.meta.url)));
   }

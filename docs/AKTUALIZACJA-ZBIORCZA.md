@@ -196,3 +196,35 @@ niż 32 dni są prezentowane jako lista według dat, bez pomijania zajęć.
 Walidacja: 6 scenariuszy Playwright, w tym tabela z jednym wpisem, tygodniowy kalendarz,
 otwieranie dziennika, nawigacja dat, dostęp trenera i brak przewijania całej strony
 w poziomie na telefonie. Zmiana nie wymaga migracji bazy.
+
+## Pulpit, oś godzinowa i pełne kartoteki
+
+Po zalogowaniu administrator trafia na pulpit: zajęcia dzisiaj, zaległe należności,
+lista rezerwowa, ostatnio dodani zawodnicy i dostępności trenerów do zatwierdzenia.
+Skróty prowadzą do dziennika, kartoteki lub odpowiednio przefiltrowanych rozliczeń.
+Przycisk „Odśwież” ponownie pobiera dane; pulpit nie wysyła powiadomień.
+
+Widok tygodnia i dnia ma teraz oś godzinową. Nakładające się terminy dzielą kolumnę,
+a zakres godzin rozszerza się do najwcześniejszych i najpóźniejszych zajęć. Wpis bez
+ustalonego końca ma znak „?” oraz umowną wysokość 30 minut. Miesiąc pozostaje listą
+według dat. Kafelki otwierają dziennik; zmiana terminu nadal wymaga jawnej operacji
+z uzasadnieniem. Domyślnie otwiera się bieżący tydzień od poniedziałku.
+
+Karta trenera ma zakładki: dane, grupy, dyspozycyjność, nieobecności, wynagrodzenia.
+Pozwala edytować dane, ustawić warunki współpracy i stawki, zgłaszać i zatwierdzać
+nieobecności oraz rozliczać wynagrodzenie wybranego miesiąca. Formularze uruchomione
+z karty dotyczą jej trenera. Pod nieobecnościami pokazujemy przyszłe, nieodwołane
+zajęcia pokrywające się z wpisami oczekującymi lub zatwierdzonymi. Zatwierdzenie
+nieobecności samo nie odwołuje zajęć ani nie przypisuje zastępcy — dziennik zawiera
+odpowiednie operacje. Wynagrodzenie nadal wynika z potwierdzonych zajęć i stawek.
+Poprawiono obsługę dat z formularza datetime-local (bez sekund).
+
+Kartoteka zawodnika ma wspólne podsumowanie i zakładki: dane, opiekunowie, grupy,
+obecności, rozliczenia. Historia obecności respektuje okresy uczestnictwa, zajęcia
+próbne i uprawnienia opiekunów; wyświetla zgłoszenia nieobecności, odwołania oraz
+nieuzupełnione statusy. Podsumowanie obejmuje dotychczasowe nieodwołane zajęcia,
+a lista jest filtrowana według miesiąca. Rodzic nie otrzymuje historii innych dzieci.
+
+Zmiana nie wymaga migracji bazy. Testy obejmują rozkład nakładających się terminów,
+prywatność historii obecności, normalizację czasu formularza, pulpit, nawigację
+kartotek, zgłoszenie/zatwierdzenie nieobecności, stawkę z karty i widok mobilny.

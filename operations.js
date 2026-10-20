@@ -40,6 +40,19 @@ export function createCalendar(db,{sessions,guardians,chargedTotals,reconcileExc
   const children=roster(s).filter(a=>user.role!=='parent'||guardians.canAccess(a,user));
   return {session:{id:s.id,starts_at:s.starts_at,ends_at:s.ends_at,excluded:s.excluded},children:children.map(a=>({...a,attendance:db.prepare('SELECT status FROM attendance WHERE session_id=? AND athlete_id=?').get(s.id,a.id)?.status||'unmarked',reported_absent:Boolean(db.prepare('SELECT 1 FROM absence_reports WHERE session_id=? AND athlete_id=? AND active=1').get(s.id,a.id)),stamps:confirmedAttendance(a.id,user).length})),completion:db.prepare('SELECT * FROM lesson_completion WHERE session_id=?').get(s.id)||null};
  }
+ function athleteHistory(user,id){
+  const athlete=db.prepare('SELECT * FROM athletes WHERE id=?').get(integer(id));
+  if(!athlete||!['admin','parent'].includes(user.role)||(user.role==='parent'&&!guardians.canAccess(athlete,user)))throw Object.assign(Error('Nie znaleziono zawodnika.'),{status:404});
+  const relevant=new Set(all(`SELECT DISTINCT s.id FROM sessions s JOIN membership_periods p ON p.group_id=s.group_id WHERE p.athlete_id=? AND p.starts_at<=s.starts_at AND (p.ends_at IS NULL OR p.ends_at>s.starts_at) AND (p.status='active' OR EXISTS(SELECT 1 FROM enrollments e WHERE e.group_id=p.group_id AND e.athlete_id=p.athlete_id AND e.trial_id=s.id))`,id).map(s=>s.id));
+  const items=sessions().filter(s=>relevant.has(s.id)).map(s=>{
+   const group=db.prepare('SELECT name,location FROM groups WHERE id=?').get(s.group_id);
+   const attendance=db.prepare('SELECT status FROM attendance WHERE session_id=? AND athlete_id=?').get(s.id,id);
+   return {id:s.id,group_id:s.group_id,group_name:group.name,location:group.location,starts_at:s.starts_at,ends_at:s.ends_at,excluded:s.excluded,
+    status:attendance?.status||'unmarked',completed:Boolean(db.prepare('SELECT completed FROM lesson_completion WHERE session_id=?').get(s.id)?.completed),
+    reported_absent:Boolean(db.prepare('SELECT 1 FROM absence_reports WHERE session_id=? AND athlete_id=? AND active=1').get(s.id,id))};
+  }).sort((a,b)=>b.starts_at.localeCompare(a.starts_at));
+  return {athlete_id:id,items};
+ }
  function mark(user,b) {
   const s=lesson(b.session_id,user);
   if(user.role==='parent')throw Object.assign(Error('Obecność sprawdza trener lub administrator.'),{status:403});
@@ -98,5 +111,5 @@ export function createCalendar(db,{sessions,guardians,chargedTotals,reconcileExc
    reconcileExclusions(before,reason);admissions.sync();return {ok:true};
   });
  }
- return {list,detail,mark,absence,complete,edit,syncAssignments,roster,canRead,confirmedAttendance};
+ return {list,detail,athleteHistory,mark,absence,complete,edit,syncAssignments,roster,canRead,confirmedAttendance};
 }

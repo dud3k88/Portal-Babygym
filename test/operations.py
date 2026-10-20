@@ -29,6 +29,8 @@ with tempfile.TemporaryDirectory() as folder:
   child=parent.call('athletes',{'name':'Dziecko'},201)['id']
   result=admin.call('users',{'name':'Trener','email':'coach@example.org','role':'trainer'},201);coach.call('auth/activate',{'token':result['token'],'password':'coach-test-password'})
   trainer=admin.call('state')['trainers'][0]['id']
+  availability=admin.call('business/availability',{'trainer_id':trainer,'starts_at':'2099-09-10T12:00','ends_at':'2099-09-10T15:00','kind':'unavailable','reason':'Test formularza'})
+  assert next(a for a in admin.call('business')['availability'] if a['id']==availability['id'])['starts_at']=='2099-09-10T12:00:00'
   location=admin.call('locations',{'name':'Placówka'},201)['id']
   group=admin.call('groups',{'name':'Grupa','location_id':location,'capacity':10,'price':3500,'trial_price':0,'trials':True,'trainer_ids':[trainer],'dates':['2099-09-01T13:00','2099-09-08T13:00']},201)['id']
   charge=parent.call('enrollments',{'group_id':group,'athlete_id':child},201)['id']
@@ -43,6 +45,11 @@ with tempfile.TemporaryDirectory() as folder:
   coach.call('calendar/complete',{'session_id':session,'completed':True})
   coach.call('calendar/complete',{'session_id':session,'completed':True})
   assert parent.call('calendar/detail?id='+str(session))['children'][0]['stamps']==1
+  history=parent.call('calendar/athlete?id='+str(child))['items']
+  assert next(s for s in history if s['id']==session)['status']=='present'
+  other.call('calendar/athlete?id='+str(child),status=404)
+  coach.call('calendar/athlete?id='+str(child),status=403)
+  assert admin.call('calendar/athlete?id='+str(child))['items']==history
   coach.call('calendar/mark',{'session_id':session,'athlete_id':child,'status':'absent'},400)
   coach.call('calendar/mark',{'session_id':session,'athlete_id':child,'status':'absent','reason':'Korekta'})
   assert parent.call('calendar/detail?id='+str(session))['children'][0]['stamps']==0

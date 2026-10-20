@@ -59,7 +59,7 @@ test('MFA i kody zapasowe, zaproszenie nowego opiekuna, reset hasła i cofnięci
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
   await page.screenshot({path:testInfo.outputPath('mfa-mobile.png'),fullPage:true});
   await page.locator('#mfa-form [name=code]').fill(codes[0]);await page.locator('#mfa-form button').click();
-  await expect(page.locator('#groups')).toBeVisible();
+  await expect(page.locator('#dashboard')).toBeVisible();
   const a=await browser.newContext(),b=await browser.newContext(),pa=await a.newPage(),pb=await b.newPage();
   pa.on('pageerror',error=>errors.push(error.message));pb.on('pageerror',error=>errors.push(error.message));
   try {

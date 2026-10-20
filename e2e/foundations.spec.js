@@ -72,10 +72,17 @@ test('placówka, publiczny zapis, blokada rodzica, dziennik i mobilny panel',asy
   await expect(page.locator('#enrollments')).toContainText('Brak należności');
   await page.selectOption('#billing-filter-status','pending');
   await expect(page.locator('#enrollments')).toContainText('Jan Testowy');
+  await page.locator('nav [data-view=dashboard]').click();
+  await expect(page.locator('#dashboard-content')).toContainText('Jan Testowy');
+  await page.screenshot({path:testInfo.outputPath('pulpit.png'),fullPage:true});
   await page.locator('nav [data-view=athletes]').click();
   await expect(page.locator('.directory-table tbody tr')).toHaveCount(1);
   await page.screenshot({path:testInfo.outputPath('zawodnicy.png'),fullPage:true});
-  await page.locator('#athlete-list [data-athlete]').click();await page.locator('[data-athlete-tab=parent]').click();
+  await page.locator('#athlete-list [data-athlete]').click();
+  await page.locator('[data-athlete-tab=attendance]').click();
+  await expect(page.locator('#attendance-history')).toContainText('Liski');
+  await expect(page.locator('#attendance-history')).toContainText('Zaplanowane');
+  await page.locator('[data-athlete-tab=parent]').click();
   page.once('dialog',dialog=>dialog.accept());await page.locator('[data-parent-access]').click();
   await expect(page.locator('#athlete-panel-parent')).toContainText('Zablokowane');
   expect((await parentPage.request.get(origin+'/api/state')).status()).toBe(401);
@@ -87,6 +94,7 @@ test('placówka, publiczny zapis, blokada rodzica, dziennik i mobilny panel',asy
   await page.selectOption('#lesson-filters [name=view]','week');
   await expect(page.locator('.lesson-event')).toHaveCount(1);
   await expect(page.locator('.lesson-day')).toHaveCount(7);
+  await expect(page.locator('.hour-axis')).toContainText('13:00');
   await page.screenshot({path:testInfo.outputPath('kalendarz.png'),fullPage:true});
   await page.locator('.lesson-event').click();
   await expect(page.locator('#lesson-dialog')).toBeVisible();
@@ -105,7 +113,7 @@ test('placówka, publiczny zapis, blokada rodzica, dziennik i mobilny panel',asy
   await page.locator('#audit-list details').first().locator('summary').click();
   await expect(page.locator('#audit-list details[open]')).toContainText('Status');
   await page.setViewportSize({width:390,height:844});
-  for(const view of ['audit','locations','athletes','finance','calendar','messages','policies','equipment','library','business']) {
+  for(const view of ['dashboard','audit','locations','athletes','finance','calendar','messages','policies','equipment','library','business']) {
    await page.goto(origin+'/#'+view);
    await expect(page.locator(view==='calendar'?'#calendar-page':'#'+view)).toBeVisible();
    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),view).toBeTruthy();
