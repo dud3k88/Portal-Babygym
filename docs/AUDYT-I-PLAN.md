@@ -8,6 +8,10 @@ trenera — oraz [etap 2B](ETAP-2B.md): MFA, reset hasła i dodatkowych opiekun�
 z lokalnym dostarczaniem testowym linków. Poniższe tabele stanu zastanego oraz stanu
 po etapie 1 pozostają historycznym punktem odniesienia; bieżące ograniczenia etapu 2
 opisują raporty. Produkcyjna poczta i datowane zakresy trenera nadal wymagają wdrożenia.
+Wdrożono też [etap 3A](ETAP-3A.md): sezony, statusy/otwieranie zapisów,
+kopię ustawień grup, okresy uczestnictwa, rezygnację z końcem miesiąca bez korekty
+bieżącej opłaty (decyzja użytkownika) oraz powrót z historią. Pozostałe elementy
+etapu 3, w tym próby/konwersja, kolejka i zgody, pozostają do wykonania.
 
 ## 1. Stos i działające podstawy
 

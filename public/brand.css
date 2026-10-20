@@ -130,3 +130,6 @@ select:not([multiple]):not([size]), select[size="1"] {
 #mfa-panel .tertiary, #auth-forgot { margin-top: 16px; }
 #mfa-replace-label { display: flex; align-items: flex-start; gap: 10px; line-height: 1.5; }
 #mfa-replace-label input { flex: 0 0 auto; width: 16px; height: 16px; margin-top: 2px; }
+.participation-history { margin-top: 16px; }
+.participation-history summary { cursor: pointer; color: var(--accent); }
+.participation-history p { overflow-wrap: anywhere; }

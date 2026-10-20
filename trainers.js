@@ -13,20 +13,20 @@ export function createTrainerService(db,auth) {
   const trainer=profile(user);
   const groups=all('SELECT g.id,g.name,g.location_id,g.location,g.start_date,g.end_date,g.weekday,g.start_time,g.end_time,g.capacity FROM groups g JOIN group_trainers gt ON gt.group_id=g.id WHERE gt.trainer_id=?',trainer.id);
   const groupIds=new Set(groups.map(group=>group.id));
-  const memberships=all("SELECT m.* FROM memberships m JOIN group_trainers gt ON gt.group_id=m.group_id WHERE gt.trainer_id=? AND m.status IN ('active','trial')",trainer.id);
-  const athletes=all("SELECT DISTINCT a.id,a.name,a.birth_date,a.parent_id FROM athletes a JOIN memberships m ON m.athlete_id=a.id JOIN group_trainers gt ON gt.group_id=m.group_id WHERE gt.trainer_id=? AND m.status IN ('active','trial') ORDER BY a.name",trainer.id);
+  const memberships=all("SELECT m.* FROM memberships m JOIN group_trainers gt ON gt.group_id=m.group_id WHERE gt.trainer_id=? AND m.status IN ('active','trial') AND (m.ends_at IS NULL OR m.ends_at>academy_now())",trainer.id);
+  const athletes=all("SELECT DISTINCT a.id,a.name,a.birth_date,a.parent_id FROM athletes a JOIN memberships m ON m.athlete_id=a.id JOIN group_trainers gt ON gt.group_id=m.group_id WHERE gt.trainer_id=? AND m.status IN ('active','trial') AND (m.ends_at IS NULL OR m.ends_at>academy_now()) ORDER BY a.name",trainer.id);
   const athleteIds=new Set(athletes.map(athlete=>athlete.id));
   const links=all('SELECT id AS athlete_id,parent_id AS user_id FROM athletes UNION SELECT athlete_id,user_id FROM athlete_guardians').filter(link=>athleteIds.has(link.athlete_id));
   const parentIds=new Set(links.map(link=>link.user_id));
   const parents=all("SELECT id,name,email,phone FROM users WHERE role='parent'").filter(parent=>parentIds.has(parent.id));
-  return {user,trainer,groups:groups.map(group=>({...group,member_count:memberships.filter(member=>member.group_id===group.id).length})),memberships,athletes,parents,guardian_links:links,
+  return {user,trainer,groups:groups.map(group=>({...group,member_count:memberships.filter(member=>member.group_id===group.id).length})),memberships:memberships.map(({withdrawal_reason,...member})=>member),athletes,parents,guardian_links:links,
    locations:all('SELECT DISTINCT l.id,l.name,l.address,l.city FROM locations l JOIN groups g ON g.location_id=l.id JOIN group_trainers gt ON gt.group_id=g.id WHERE gt.trainer_id=? ORDER BY l.name',trainer.id),
    sessions:sessions.filter(session=>groupIds.has(session.group_id)).map(({id,group_id,starts_at,ends_at,cancelled,excluded})=>({id,group_id,starts_at,ends_at,cancelled,excluded})),
    trainer_notes:all('SELECT athlete_id,body,updated_at FROM trainer_notes WHERE trainer_id=?',trainer.id).filter(note=>athleteIds.has(note.athlete_id)),logo,now:warsawNow()};
  }
  function saveNote(user,body) {
   const trainer=profile(user),athleteId=id(body.athlete_id);
-  if(!db.prepare("SELECT 1 FROM memberships m JOIN group_trainers gt ON gt.group_id=m.group_id WHERE gt.trainer_id=? AND m.athlete_id=? AND m.status IN ('active','trial')").get(trainer.id,athleteId))throw denied();
+  if(!db.prepare("SELECT 1 FROM memberships m JOIN group_trainers gt ON gt.group_id=m.group_id WHERE gt.trainer_id=? AND m.athlete_id=? AND m.status IN ('active','trial') AND (m.ends_at IS NULL OR m.ends_at>academy_now())").get(trainer.id,athleteId))throw denied();
   if(typeof body.body!=='string'||body.body.length>2000)throw Error('Notatka może mieć maksymalnie 2000 znaków.');
   db.prepare('INSERT INTO trainer_notes(trainer_id,athlete_id,body,updated_at) VALUES(?,?,?,?) ON CONFLICT(trainer_id,athlete_id) DO UPDATE SET body=excluded.body,updated_at=excluded.updated_at').run(trainer.id,athleteId,body.body.trim(),new Date().toISOString());
   return {ok:true};

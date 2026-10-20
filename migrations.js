@@ -139,3 +139,48 @@ export function migrateAccountSecurity(db) {
     db.exec('COMMIT');
   }catch(error){db.exec('ROLLBACK');throw error;}
 }
+
+export function migrateSeasons(db) {
+  if(db.prepare('SELECT version FROM schema_migrations WHERE version=4').get())return;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.exec(`CREATE TABLE seasons(
+      id INTEGER PRIMARY KEY,name TEXT NOT NULL,name_key TEXT NOT NULL UNIQUE,
+      start_date TEXT NOT NULL,end_date TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','archived')),
+      CHECK(start_date<=end_date));
+      ALTER TABLE groups ADD COLUMN season_id INTEGER REFERENCES seasons(id);
+      ALTER TABLE groups ADD COLUMN status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('planned','active','paused','ended'));
+      ALTER TABLE groups ADD COLUMN registration_open INTEGER NOT NULL DEFAULT 1 CHECK(registration_open IN (0,1));
+      CREATE INDEX groups_season ON groups(season_id);`);
+    replaceAuditTriggers(db,'seasons',['id','name','start_date','end_date','status']);
+    replaceAuditTriggers(db,'groups',['id','location_id','name','capacity','price','trial_price','trials','start_date','end_date','start_time','end_time','weekday','season_id','status','registration_open']);
+    if(db.prepare('PRAGMA foreign_key_check').all().length)throw Error('Migracja sezonów narusza powiązania.');
+    db.prepare('INSERT INTO schema_migrations VALUES(4,?,?)').run('Seasons, group lifecycle and registration controls',new Date().toISOString());
+    db.exec('COMMIT');
+  }catch(error){db.exec('ROLLBACK');throw error;}
+}
+
+export function migrateParticipation(db) {
+  if(db.prepare('SELECT version FROM schema_migrations WHERE version=5').get())return;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.exec(`ALTER TABLE memberships ADD COLUMN ends_at TEXT;
+      ALTER TABLE memberships ADD COLUMN withdrawal_reason TEXT NOT NULL DEFAULT '';
+      CREATE TABLE membership_periods(
+        id INTEGER PRIMARY KEY,group_id INTEGER NOT NULL,athlete_id INTEGER NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('active','trial')),
+        starts_at TEXT NOT NULL,ends_at TEXT,withdrawal_reason TEXT NOT NULL DEFAULT '',
+        FOREIGN KEY(group_id,athlete_id) REFERENCES memberships(group_id,athlete_id),
+        CHECK(ends_at IS NULL OR ends_at>starts_at));
+      INSERT INTO membership_periods(group_id,athlete_id,status,starts_at)
+        SELECT group_id,athlete_id,status,joined_at FROM memberships;
+      CREATE INDEX periods_member ON membership_periods(group_id,athlete_id,starts_at);
+      CREATE UNIQUE INDEX periods_open ON membership_periods(group_id,athlete_id) WHERE ends_at IS NULL;`);
+    replaceAuditTriggers(db,'memberships',['group_id','athlete_id','status','joined_at','trial_id','ends_at','withdrawal_reason'],['group_id','athlete_id']);
+    replaceAuditTriggers(db,'membership_periods',['id','group_id','athlete_id','status','starts_at','ends_at','withdrawal_reason']);
+    if(db.prepare('PRAGMA foreign_key_check').all().length)throw Error('Migracja uczestnictwa narusza powiązania.');
+    db.prepare('INSERT INTO schema_migrations VALUES(5,?,?)').run('Participation periods and month-end withdrawals',new Date().toISOString());
+    db.exec('COMMIT');
+  }catch(error){db.exec('ROLLBACK');throw error;}
+}

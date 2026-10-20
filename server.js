@@ -1,5 +1,7 @@
 import http from 'node:http';
-import { migrateFoundations, migrateTrainerAccess, migrateAccountSecurity } from './migrations.js';
+import { migrateFoundations, migrateTrainerAccess, migrateAccountSecurity, migrateSeasons, migrateParticipation } from './migrations.js';
+import { createSeasonService } from './seasons.js';
+import { createParticipation, isCurrentMember, membershipDTO, nextMonthStart } from './participation.js';
 import { createGuardians } from './guardians.js';
 import { configureAudit, withRequestContext, requestContext, recordAccess } from './audit.js';
 import { DatabaseSync } from 'node:sqlite';
@@ -12,6 +14,7 @@ mkdirSync('data', { recursive: true });
 const logoPath = process.env.LOGO_PATH || 'data/logo';
 const db = new DatabaseSync(process.env.DB_PATH || 'data/evolution.sqlite');
 configureAudit(db);
+db.function('academy_now',warsawNow);
 const legacyBackfillDone = Boolean(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'").get() && db.prepare('SELECT version FROM schema_migrations WHERE version=1').get());
 db.exec(`PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS groups(id INTEGER PRIMARY KEY, location TEXT NOT NULL, name TEXT NOT NULL, capacity INTEGER NOT NULL, price INTEGER NOT NULL, trial_price INTEGER NOT NULL, trials INTEGER NOT NULL);
@@ -84,13 +87,28 @@ if (!legacyBackfillDone) for(const e of all('SELECT * FROM enrollments WHERE id 
 migrateFoundations(db);
 migrateTrainerAccess(db,process.env.DB_PATH || 'data/evolution.sqlite');
 migrateAccountSecurity(db);
+migrateSeasons(db);
+migrateParticipation(db);
+const participation=createParticipation(db);
+const seasonService=createSeasonService(db);
 auth.validateSecurity();
 const guardians=createGuardians(db,auth);
 const trainerService=createTrainerService(db,auth);
 function chargedTotals() {
- const active=new Set(sessionsWithStatus().filter(s=>!s.excluded).map(s=>s.id));
+ const active=new Map(sessionsWithStatus().filter(s=>!s.excluded).map(s=>[s.id,s]));
+ const charges=new Map(all('SELECT id,group_id,athlete_id FROM enrollments').map(charge=>[charge.id,charge]));
+ const periods=new Map();
+ for(const period of all('SELECT * FROM membership_periods')) {
+  const key=period.group_id+':'+period.athlete_id;
+  if(!periods.has(key))periods.set(key,[]);
+  periods.get(key).push(period);
+ }
  const totals=new Map();
- for(const item of all('SELECT * FROM enrollment_sessions')) totals.set(item.enrollment_id,(totals.get(item.enrollment_id)||0)+(active.has(item.session_id)?item.price:0));
+ for(const item of all('SELECT * FROM enrollment_sessions')) {
+  const session=active.get(item.session_id),charge=charges.get(item.enrollment_id);
+  const included=session&&(periods.get(charge.group_id+':'+charge.athlete_id)||[]).some(period=>period.starts_at<=session.starts_at&&(!period.ends_at||session.starts_at<period.ends_at));
+  totals.set(item.enrollment_id,(totals.get(item.enrollment_id)||0)+(included?item.price:0));
+ }
  return totals;
 }
 function reconcileExclusions(before,reason) {
@@ -124,6 +142,7 @@ function assignTrainers(groupId,ids) {
 }
 function quote(b) {
  const g = group(b.group_id);
+ if(!seasonService.available(g))throw Error('Zapisy do tej grupy są zamknięte lub sezon jeszcze nie trwa.');
  if (locationById(g.location_id).status !== 'active') throw Error('Zapisy w tej placówce są zamknięte.');
  const joinedAt=warsawNow();
  const month=enrollmentMonth(b.month,joinedAt);
@@ -148,14 +167,14 @@ function stateFor(user) {
  const enrollmentIds=new Set(enrollments.map(e=>e.id));
  const ownGroupIds=new Set(all('SELECT * FROM memberships').filter(m=>ids.has(m.athlete_id)).map(m=>m.group_id));
  const availableLocations=new Set(all("SELECT id FROM locations WHERE status='active'").map(l=>l.id));
- const visibleGroups=all(`SELECT g.*,(SELECT COUNT(*) FROM memberships m WHERE m.group_id=g.id AND m.status IN ('active','trial')) AS member_count FROM groups g`).filter(g=>admin||availableLocations.has(g.location_id)||ownGroupIds.has(g.id));
+ const visibleGroups=all(`SELECT g.*,(SELECT COUNT(*) FROM memberships m WHERE m.group_id=g.id AND m.status IN ('active','trial') AND (m.ends_at IS NULL OR m.ends_at>academy_now())) AS member_count FROM groups g`).filter(g=>admin||(availableLocations.has(g.location_id)&&seasonService.available(g))||ownGroupIds.has(g.id));
  const visibleIds=new Set(visibleGroups.map(g=>g.id));
  const trainerLinks=all('SELECT * FROM group_trainers').filter(gt=>admin||visibleIds.has(gt.group_id));
  const trainerIds=new Set(trainerLinks.map(gt=>gt.trainer_id));
  const visibleLocations=new Set(visibleGroups.map(g=>g.location_id));
  const guardianLinks=guardians.links().filter(link=>admin||ids.has(link.athlete_id));
  const parentIds=new Set([user.id,...guardianLinks.map(link=>link.user_id)]);
- return {user,athletes,guardian_links:guardianLinks,guardian_invitations:all('SELECT id,athlete_id,email,invited_by,expires_at FROM guardian_invitations WHERE expires_at>?',Date.now()).filter(invitation=>admin||ids.has(invitation.athlete_id)),parents:all("SELECT id,name,email,phone,access_status,password_hash IS NOT NULL AS active FROM users WHERE role='parent' ORDER BY name").filter(parent=>admin||parentIds.has(parent.id)),memberships:all('SELECT * FROM memberships').filter(m=>admin||ids.has(m.athlete_id)),locations:admin?all('SELECT * FROM locations ORDER BY name'):all('SELECT id,name,status FROM locations ORDER BY name').filter(l=>availableLocations.has(l.id)||visibleLocations.has(l.id)),trainer_notes:admin?all('SELECT * FROM trainer_notes'):[],trainers:admin?all('SELECT t.*,u.password_hash IS NOT NULL AS account_active FROM trainers t LEFT JOIN users u ON u.id=t.user_id ORDER BY t.name'):all('SELECT id,name FROM trainers ORDER BY name').filter(t=>trainerIds.has(t.id)),group_trainers:trainerLinks,logo:existsSync(logoPath)?'/logo?v='+Date.now():null,groups:visibleGroups,sessions:sessionsWithStatus().filter(s=>admin||ownGroupIds.has(s.group_id)||(visibleIds.has(s.group_id)&&s.starts_at>=warsawNow())),exclusions:admin?all('SELECT * FROM exclusions ORDER BY start_date'):[],enrollments,adjustments:all('SELECT * FROM adjustments ORDER BY id DESC').filter(a=>admin||enrollmentIds.has(a.enrollment_id)),now:warsawNow()};
+ return {user,withdrawal_ends_at:nextMonthStart(),seasons:all('SELECT * FROM seasons ORDER BY start_date DESC').filter(season=>admin||visibleGroups.some(group=>group.season_id===season.id)),athletes,guardian_links:guardianLinks,guardian_invitations:all('SELECT id,athlete_id,email,invited_by,expires_at FROM guardian_invitations WHERE expires_at>?',Date.now()).filter(invitation=>admin||ids.has(invitation.athlete_id)),parents:all("SELECT id,name,email,phone,access_status,password_hash IS NOT NULL AS active FROM users WHERE role='parent' ORDER BY name").filter(parent=>admin||parentIds.has(parent.id)),memberships:all('SELECT * FROM memberships').filter(m=>admin||ids.has(m.athlete_id)).map(m=>membershipDTO(m)),membership_periods:all('SELECT * FROM membership_periods ORDER BY id DESC').filter(period=>admin||ids.has(period.athlete_id)),locations:admin?all('SELECT * FROM locations ORDER BY name'):all('SELECT id,name,status FROM locations ORDER BY name').filter(l=>availableLocations.has(l.id)||visibleLocations.has(l.id)),trainer_notes:admin?all('SELECT * FROM trainer_notes'):[],trainers:admin?all('SELECT t.*,u.password_hash IS NOT NULL AS account_active FROM trainers t LEFT JOIN users u ON u.id=t.user_id ORDER BY t.name'):all('SELECT id,name FROM trainers ORDER BY name').filter(t=>trainerIds.has(t.id)),group_trainers:trainerLinks,logo:existsSync(logoPath)?'/logo?v='+Date.now():null,groups:visibleGroups.map(group=>({...group,registration_available:availableLocations.has(group.location_id)&&seasonService.available(group)})),sessions:sessionsWithStatus().filter(s=>admin||ownGroupIds.has(s.group_id)||(visibleIds.has(s.group_id)&&s.starts_at>=warsawNow())),exclusions:admin?all('SELECT * FROM exclusions ORDER BY start_date'):[],enrollments,adjustments:all('SELECT * FROM adjustments ORDER BY id DESC').filter(a=>admin||enrollmentIds.has(a.enrollment_id)),now:warsawNow()};
 }
 async function readJSON(req) {
  if(!req.headers['content-type']?.startsWith('application/json')) throw Object.assign(Error('Wymagany format JSON.'),{status:415});
@@ -166,12 +185,21 @@ function saveEnrollment(b,athlete,payerId=athlete.parent_id) {
  const parent=db.prepare('SELECT * FROM users WHERE id=?').get(payerId);
      const q=quote(b);
      const member=db.prepare('SELECT * FROM memberships WHERE group_id=? AND athlete_id=?').get(q.group.id,athlete.id);
-     const count=db.prepare("SELECT COUNT(*) AS n FROM memberships WHERE group_id=? AND status IN ('active','trial')").get(q.group.id).n;
-     if(!member&&count>=q.group.capacity) throw Error('Brak wolnych miejsc.');
+     const count=db.prepare("SELECT COUNT(*) AS n FROM memberships WHERE group_id=? AND status IN ('active','trial') AND (ends_at IS NULL OR ends_at>academy_now())").get(q.group.id).n;
+     if(!isCurrentMember(member,q.joinedAt)&&count>=q.group.capacity) throw Error('Brak wolnych miejsc.');
      if(db.prepare('SELECT id FROM enrollments WHERE group_id=? AND month=? AND athlete_id=?').get(q.group.id,q.month,athlete.id)) throw Error('Zawodnik jest już zapisany w tej grupie w wybranym miesiącu.');
      const id=Number(db.prepare('INSERT INTO enrollments(group_id,parent,email,child,month,trial_id,amount,created_at,athlete_id,payer_id) VALUES(?,?,?,?,?,?,?,?,?,?)').run(q.group.id,parent.name,parent.email,athlete.name,q.month,q.trial,q.amount,q.joinedAt,athlete.id,parent.id).lastInsertRowid);
-     db.prepare('INSERT OR IGNORE INTO memberships(group_id,athlete_id,status,joined_at,trial_id) VALUES(?,?,?,?,?)').run(q.group.id,athlete.id,q.trial?'trial':'active',q.joinedAt,q.trial);
-     if(!q.trial) db.prepare("UPDATE memberships SET status='active',trial_id=NULL WHERE group_id=? AND athlete_id=?").run(q.group.id,athlete.id);
+     const current=isCurrentMember(member,q.joinedAt);
+     if(current&&member.status==='active'&&q.trial)throw Error('Zawodnik z aktywnym zapisem stałym nie może ponownie zapisać się na próbę w tej grupie.');
+     if(!current) {
+      db.prepare("INSERT INTO memberships(group_id,athlete_id,status,joined_at,trial_id) VALUES(?,?,?,?,?) ON CONFLICT(group_id,athlete_id) DO UPDATE SET status=excluded.status,joined_at=excluded.joined_at,trial_id=excluded.trial_id,ends_at=NULL,withdrawal_reason=''").run(q.group.id,athlete.id,q.trial?'trial':'active',q.joinedAt,q.trial);
+      participation.recordStart(q.group.id,athlete.id,q.trial?'trial':'active',q.joinedAt);
+     }else if(!q.trial&&member.status==='trial') {
+      db.prepare('UPDATE membership_periods SET ends_at=? WHERE group_id=? AND athlete_id=? AND (ends_at IS NULL OR ends_at>?)').run(q.joinedAt,q.group.id,athlete.id,q.joinedAt);
+      db.prepare("UPDATE memberships SET status='active',joined_at=?,trial_id=NULL WHERE group_id=? AND athlete_id=?").run(q.joinedAt,q.group.id,athlete.id);
+      participation.recordStart(q.group.id,athlete.id,'active',q.joinedAt);
+      if(member.ends_at)db.prepare('UPDATE membership_periods SET ends_at=?,withdrawal_reason=? WHERE group_id=? AND athlete_id=? AND ends_at IS NULL').run(member.ends_at,member.withdrawal_reason,q.group.id,athlete.id);
+     }
      for(const term of sessionsWithStatus().filter(s=>s.group_id===q.group.id&&s.starts_at.startsWith(q.month)&&s.starts_at>=q.joinedAt&&!s.cancelled&&(!q.trial||s.id===q.trial))) db.prepare('INSERT INTO enrollment_sessions VALUES(?,?,?)').run(id,term.id,q.trial?q.amount:term.price);
 
  return {id,amount:q.amount};
@@ -190,8 +218,10 @@ const server = http.createServer(withRequestContext(async (req,res) => {
   if(req.method==='GET'&&url.pathname==='/api/public/catalog') {
    const now=warsawNow();
    const activeLocations = all("SELECT id,name FROM locations WHERE status='active' ORDER BY name");
-   const activeGroups = new Set(all("SELECT g.id FROM groups g JOIN locations l ON l.id=g.location_id WHERE l.status='active'").map(g=>g.id));
-   return send(200,{logo:existsSync(logoPath)?'/logo':null,locations:activeLocations,groups:all(`SELECT id,location_id,name,capacity,price,trial_price,trials,weekday,start_time,end_time,(SELECT COUNT(*) FROM memberships m WHERE m.group_id=groups.id AND m.status IN ('active','trial')) AS member_count FROM groups`).filter(g=>activeGroups.has(g.id)),trainers:all('SELECT id,name FROM trainers WHERE id IN (SELECT gt.trainer_id FROM group_trainers gt JOIN groups g ON g.id=gt.group_id JOIN locations l ON l.id=g.location_id WHERE l.status=?) ORDER BY name','active'),group_trainers:all('SELECT * FROM group_trainers').filter(gt=>activeGroups.has(gt.group_id)),sessions:sessionsWithStatus().filter(s=>activeGroups.has(s.group_id)&&!s.cancelled&&s.starts_at>=now).map(s=>({id:s.id,group_id:s.group_id,starts_at:s.starts_at,ends_at:s.ends_at,excluded:s.excluded})),now});
+   const activeGroups = new Set(all("SELECT g.* FROM groups g JOIN locations l ON l.id=g.location_id WHERE l.status='active'").filter(g=>seasonService.available(g)).map(g=>g.id));
+   const publicLinks=all('SELECT * FROM group_trainers').filter(link=>activeGroups.has(link.group_id));
+   const publicTrainerIds=new Set(publicLinks.map(link=>link.trainer_id));
+   return send(200,{logo:existsSync(logoPath)?'/logo':null,locations:activeLocations,groups:all(`SELECT id,location_id,name,capacity,price,trial_price,trials,weekday,start_time,end_time,(SELECT COUNT(*) FROM memberships m WHERE m.group_id=groups.id AND m.status IN ('active','trial') AND (m.ends_at IS NULL OR m.ends_at>academy_now())) AS member_count FROM groups`).filter(g=>activeGroups.has(g.id)),trainers:all('SELECT id,name FROM trainers ORDER BY name').filter(trainer=>publicTrainerIds.has(trainer.id)),group_trainers:publicLinks,sessions:sessionsWithStatus().filter(s=>activeGroups.has(s.group_id)&&!s.cancelled&&s.starts_at>=now).map(s=>({id:s.id,group_id:s.group_id,starts_at:s.starts_at,ends_at:s.ends_at,excluded:s.excluded})),now});
   }
   if(req.method==='POST'&&url.pathname==='/api/public/quote') {
    const q=quote(await readJSON(req));return send(200,{amount:q.amount,count:q.count});
@@ -229,7 +259,7 @@ const server = http.createServer(withRequestContext(async (req,res) => {
   if(url.pathname.startsWith('/api/')) {
    if(!user) return send(401,{error:'Zaloguj się, aby kontynuować.'});
    if (!['admin','trainer','parent'].includes(user.role)) return send(403,{error:'Brak dostępu dla tej roli.'});
-   const parentPaths=['/api/state','/api/athletes','/api/athletes/update','/api/quote','/api/enrollments',...['invite','preview','accept','revoke','cancel'].map(action=>'/api/guardians/'+action)];
+   const parentPaths=['/api/state','/api/athletes','/api/athletes/update','/api/quote','/api/enrollments','/api/memberships/withdraw','/api/memberships/cancel-withdrawal',...['invite','preview','accept','revoke','cancel'].map(action=>'/api/guardians/'+action)];
    const allowedPaths=user.role==='trainer'?['/api/state','/api/trainer-notes']:parentPaths;
    if(user.role!=='admin'&&!allowedPaths.includes(url.pathname)) return send(403,{error:'Ta operacja wymaga konta administratora.'});
   }
@@ -259,7 +289,15 @@ const server = http.createServer(withRequestContext(async (req,res) => {
   }
   if (req.method === 'POST' && url.pathname.startsWith('/api/')) {
    const b=await readJSON(req);
+   if(['/api/memberships/withdraw','/api/memberships/cancel-withdrawal'].includes(url.pathname))return send(200,participation.change(b,athleteById(b.athlete_id,user),url.pathname.endsWith('/cancel-withdrawal')));
    const guardianAction=url.pathname.slice('/api/guardians/'.length);
+   if(url.pathname==='/api/seasons'||url.pathname==='/api/seasons/update')return send(url.pathname.endsWith('/update')?200:201,seasonService.save(b));
+   if(url.pathname==='/api/groups/lifecycle') {
+    const existing=group(b.id);
+    const settings=seasonService.groupSettings({...b,start_date:existing.start_date,end_date:existing.end_date},existing,all('SELECT starts_at FROM sessions WHERE group_id=?',existing.id));
+    db.prepare('UPDATE groups SET season_id=?,status=?,registration_open=? WHERE id=?').run(settings.season_id,settings.status,settings.registration_open,existing.id);
+    return send(200,{id:existing.id});
+   }
    if(url.pathname.startsWith('/api/guardians/')&&['invite','preview','accept','revoke','cancel'].includes(guardianAction))return send(200,guardians[guardianAction](b,user));
    if(url.pathname==='/api/trainer-notes') {
     if(user.role!=='trainer')return send(403,{error:'Notatkę zapisuje jej autor — trener.'});
@@ -366,13 +404,15 @@ const server = http.createServer(withRequestContext(async (req,res) => {
       return {starts_at:date+':00',ends_at:null};
      });
     }
+    const settings=seasonService.groupSettings(b,existing,terms);
     db.exec('BEGIN');
     try {
      const before=chargedTotals(),now=warsawNow();
-     const count=existing?db.prepare("SELECT COUNT(*) AS n FROM memberships WHERE group_id=? AND status IN ('active','trial')").get(existing.id).n:0;
+     const count=existing?db.prepare("SELECT COUNT(*) AS n FROM memberships WHERE group_id=? AND status IN ('active','trial') AND (ends_at IS NULL OR ends_at>academy_now())").get(existing.id).n:0;
      if(capacity<count) throw Error(`Limit nie może być mniejszy od liczby zapisanych zawodników (${count}).`);
      const id=existing?.id||Number(db.prepare('INSERT INTO groups(location,location_id,name,capacity,price,trial_price,trials) VALUES(?,?,?,?,?,?,?)').run(location.name,location.id,name,capacity,price,trialPrice,b.trials?1:0).lastInsertRowid);
      db.prepare('UPDATE groups SET location=?,location_id=?,name=?,capacity=?,price=?,trial_price=?,trials=?,start_date=?,end_date=?,start_time=?,end_time=?,weekday=? WHERE id=?').run(location.name,location.id,name,capacity,price,trialPrice,b.trials?1:0,b.start_date||null,b.end_date||null,b.start_time||null,b.end_time||null,b.weekday??null,id);
+     db.prepare('UPDATE groups SET season_id=?,status=?,registration_open=? WHERE id=?').run(settings.season_id,settings.status,settings.registration_open,id);
      assignTrainers(id,assigned);
      if(!existing) for(const term of terms) db.prepare('INSERT INTO sessions(group_id,starts_at,ends_at,price,location_id) VALUES(?,?,?,?,?)').run(id,term.starts_at,term.ends_at,price,location.id);
      else {
@@ -387,6 +427,7 @@ const server = http.createServer(withRequestContext(async (req,res) => {
        } else {
         const sessionId=Number(db.prepare('INSERT INTO sessions(group_id,starts_at,ends_at,price,location_id) VALUES(?,?,?,?,?)').run(id,term.starts_at,term.ends_at,price,location.id).lastInsertRowid);
         for(const e of all('SELECT * FROM enrollments WHERE group_id=? AND trial_id IS NULL AND month=? AND created_at<=?',id,term.starts_at.slice(0,7),term.starts_at)) {
+         if(!db.prepare('SELECT 1 FROM membership_periods WHERE group_id=? AND athlete_id=? AND starts_at<=? AND (ends_at IS NULL OR ends_at>?) LIMIT 1').get(id,e.athlete_id,term.starts_at,term.starts_at))continue;
          const agreed=db.prepare('SELECT price FROM enrollment_sessions WHERE enrollment_id=? LIMIT 1').get(e.id)?.price??price;
          db.prepare('INSERT INTO enrollment_sessions VALUES(?,?,?)').run(e.id,sessionId,agreed);
         }

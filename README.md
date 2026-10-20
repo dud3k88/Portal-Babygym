@@ -9,6 +9,7 @@ System zapisów na zajęcia, kartotek zawodników i miesięcznych należności. 
 - [Wdrożony etap 1 i checklista odbioru](docs/ETAP-1.md)
 - [Etap 2A: konta i panel trenera, migracja trzech ról](docs/ETAP-2A.md)
 - [Etap 2B: MFA, odzyskiwanie hasła i dodatkowi opiekunowie](docs/ETAP-2B.md)
+- [Etap 3A: sezony, statusy grup i rezygnacje z końcem miesiąca](docs/ETAP-3A.md)
 - [Kopia, testowe odtworzenie i procedura aktualizacji](docs/OPERACJE.md)
 
 Przed pierwszym uruchomieniem tej aktualizacji zatrzymaj aplikację i wykonaj kopię
@@ -18,6 +19,8 @@ automatyczny snapshot bazy `*.before-v2-*.sqlite` (bez logo); zachowuje wszystki
 konta i ich identyfikatory, hashe haseł i sesje. Istniejące identyfikatory i naliczenia pozostają.
 Migracja 3 dodaje MFA, reset i dodatkowych opiekunów oraz utrwala płatnika naliczeń.
 Wymaga ponownego zalogowania administratora i konfiguracji MFA; kończy jego stare sesje.
+Migracje 4–5 dodają sezony i okresy uczestnictwa. Stare grupy pozostają bez sezonu;
+zachowują otwarte zapisy, identyfikatory i naliczenia.
 Nie uruchamiaj wcześniejszego kodu na bazie z nowymi triggerami audytu; wycofanie
 wymaga odtworzenia kopii do osobnego katalogu.
 
@@ -45,6 +48,8 @@ Link z adresem localhost działa tylko na komputerze z serwerem. Wersja lokalna 
 
 ## Panel administratora
 
+- **Sezony:** nazwa, daty i archiwizacja. W ustawieniach grupy wybierasz sezon.
+  Filtry sezonu są też w grupach, zawodnikach i rozliczeniach.
 - **Grupy:** najpierw wybierz lokalizację, potem grupę. Grupy są wyświetlane jedna pod drugą. Wiersz pokazuje termin, prowadzącego i liczbę zapisanych osób względem limitu. Przycisk **Wejdź** otwiera osobny widok grupy z zawodnikami, harmonogramem, miesięczną opłatą i przyciskiem edycji ustawień. Wybrany miesiąc dotyczy szczegółów harmonogramu, nie liczebności grupy. Liczebność wynika ze stałych przypisań, a nie z liczby miesięcznych naliczeń.
 - **Zawodnicy:** jedna lista kartotek, po jednym wierszu na zawodnika niezależnie od liczby grup i lokalizacji. Wyszukiwanie po dziecku i wszystkich jego opiekunach. Po wejściu dostępne są zakładki „Dane”, „Grupy”, „Opiekunowie” i „Rozliczenia”; przypisania nie są powielane na liście głównej. Każdy zawodnik ma głównego rodzica i może mieć dodatkowych opiekunów po przyjęciu zaproszenia. Administrator może dodać profil rodzica przed dodaniem dziecka. Zmiana głównego rodzica przenosi jego dostęp, ale zachowuje historycznych płatników i salda.
 - **Lokalizacje:** rejestr przedszkoli wybieranych z listy. Nazwy różniące się tylko wielkością liter lub dodatkowymi spacjami nie tworzą duplikatów. Kartoteka zawiera też adres, kontakt i notatki administratora oraz status aktywna/wstrzymana/archiwalna. Dwa ostatnie zamykają nowe zapisy i tworzenie grup, zachowując istniejący grafik i saldo. Poprawienie nazwy aktualizuje etykiety w całym systemie, zachowując identyfikatory i wykluczenia. Nie zgadujemy, czy różne literówki oznaczają jedno miejsce.
@@ -70,7 +75,7 @@ Strona **Zapisy na zajęcia** zawiera wyłącznie wybór lokalizacji i listę je
 
 W osobnej zakładce **Moje dzieci** rodzic widzi tylko swoje dzieci, ich lokalizacje, grupy, najbliższe terminy, należności i historię korekt. Nie widzi innych rodzin ani notatek administracyjnych. Może poprawić dane swojego dziecka. Należność jest liczona z góry za pozostałe zajęcia bieżącego miesiąca; minione, odwołane i wykluczone terminy nie są naliczane. Cena próby jest ustawiana w grupie, także na 0 zł.
 
-Stałe przypisanie dziecka do grupy jest oddzielone od miesięcznych rozliczeń, więc kolejne miesiące nie zwiększają liczebności grupy. W tej wersji nowy zapis i jego naliczenie dotyczą wyłącznie bieżącego miesiąca — automatyczne tworzenie należności na kolejne miesiące pozostaje kolejnym etapem. Nie ma jeszcze płatności online, wpłat, zwrotów, rezygnacji z grupy ani odrabiania zajęć. Przypisania próbne pozostają widoczne do późniejszej obsługi ich statusów. W tym samym miesiącu nie można jeszcze zmienić zapisu próbnego na stały bez obsługi administracyjnej.
+Stałe przypisanie dziecka do grupy jest oddzielone od miesięcznych rozliczeń, więc kolejne miesiące nie zwiększają liczebności grupy. W tej wersji nowy zapis i jego naliczenie dotyczą wyłącznie bieżącego miesiąca — automatyczne tworzenie należności na kolejne miesiące pozostaje kolejnym etapem. Rezygnacja działa z końcem bieżącego miesiąca bez zmiany jego opłaty. Nie ma jeszcze płatności online, wpłat ani zwrotów. Odrabianie zajęć pozostaje wyłączone zgodnie ze specyfikacją. Przypisania próbne pozostają widoczne do późniejszej obsługi ich statusów. W tym samym miesiącu nie można jeszcze zmienić zapisu próbnego na stały bez obsługi administracyjnej.
 
 ## Logowanie i dostęp
 
@@ -189,6 +194,23 @@ Reset hasła unieważnia stare sesje i nie wyłącza MFA administratora.
 
 Konfiguracja klucza, kopia, przyjmowanie zaproszeń i ograniczenia wersji testowej:
 [ETAP-2B.md](docs/ETAP-2B.md). Testy nowego zakresu: `python3 test/security.py`,
-`npm test` oraz `npm run test:e2e`. Następne etapy dotyczą sezonów, okresów i statusów
-uczestnictwa, a potem obecności. Produkcyjna poczta, zgody/SOM i płatności pozostają
+`npm test` oraz `npm run test:e2e`. Produkcyjna poczta, zgody/SOM i płatności pozostają
 do osobnego wdrożenia.
+
+## Sezony i rezygnacje (etap 3A)
+
+**Grupy → lokalizacja → grupa → Status i zapisy** pozwala zamknąć zapisy lub
+ustawić grupę jako planowaną, aktywną, wstrzymaną lub zakończoną. Nie zmienia
+grafiku ani sald. Przerwy w zajęciach dodaj w Dniach wolnych. **Skopiuj grupę**
+przenosi ustawienia do formularza nowej grupy, bez zawodników i należności.
+
+**Moje dzieci → Zrezygnuj z końcem miesiąca** albo **Kartoteka → Grupy**:
+podaj powód i potwierdź. Miejsce pozostaje zajęte do końca miesiąca, opłata się
+nie zmienia. Do tego czasu możesz cofnąć rezygnację. Późniejszy powrót wymaga
+wolnego miejsca; zachowuje jedną kartotekę, wcześniejsze należności i historię
+okresów uczestnictwa. Trener po zakończeniu traci dostęp do danych tego uczestnika,
+jeśli nie uczestniczy on nadal w innej jego grupie.
+
+Dokładne zasady, migracje i ograniczenia: [ETAP-3A.md](docs/ETAP-3A.md).
+Nowe testy: `python3 test/participation.py`. Kolejny zakres: próby i konwersja
+na zapis stały, lista rezerwowa oraz dalsze operacje uczestnictwa, potem obecności.

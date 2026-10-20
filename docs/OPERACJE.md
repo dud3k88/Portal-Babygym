@@ -36,6 +36,9 @@ loguje się hasłem i konfiguruje aplikację uwierzytelniającą. Zapisz kody za
 Szczegóły: [ETAP-2B.md](ETAP-2B.md). Brak lub niewłaściwy klucz przy istniejącym MFA
 zatrzymuje start aplikacji — nie usuwaj tabel ani nie generuj nowego klucza,
 tylko przywróć właściwy klucz z kopii.
+Migracje 4–5 dodają sezony, statusy grup i historię okresów uczestnictwa.
+Nie przypisują automatycznie sezonów starym grupom ani nie zmieniają kwot.
+Procedurę i zasady rezygnacji opisuje [ETAP-3A.md](ETAP-3A.md).
 
 ## Wycofanie
 
@@ -63,6 +66,7 @@ python3 test/public_signup.py
 python3 test/foundations.py
 python3 test/trainers.py
 python3 test/security.py
+python3 test/participation.py
 ```
 
 Każdy test integracyjny używa osobnej tymczasowej bazy, portu i fikcyjnych danych.
