@@ -400,7 +400,13 @@ document.addEventListener('click', event => {
   if (button.hasAttribute('data-close')) button.closest('dialog').close();
   if (button.dataset.assign) openAssignment(Number(button.dataset.assign));
 });
-window.addEventListener('hashchange', () => authInfo.user ? switchView(window.location.hash.slice(1)) : showAuth(authMode));
+window.addEventListener('hashchange', () => {
+  if(window.location.hash.startsWith('#reset/')){authInfo.user=null;showAuth();return;}
+  if(authInfo.user) {
+    if(window.location.hash.startsWith('#guardian/'))showGuardianAcceptance();
+    else switchView(window.location.hash.slice(1));
+  }else showAuth(authMode);
+});
 switchView(window.location.hash.slice(1));
 
 $('#audit-refresh').onclick=()=>loadAudit();
@@ -590,6 +596,10 @@ function rosterRow(athlete) {
   const parent = state.parents.find(entry => entry.id === athlete.parent_id);
   return `<div class="entry exclusion-entry"><div><strong>${escape(athlete.name)}</strong><small>Rodzic: ${escape(parent?.name || '—')} · ${escape(parent?.email || '')}</small></div><button class="secondary" data-athlete="${athlete.id}">Kartoteka</button></div>`;
 }
+function parentsFor(athleteId) {
+  const ids=new Set((state.guardian_links||[]).filter(link=>link.athlete_id===athleteId).map(link=>link.user_id));
+  return state.parents.filter(parent=>ids.has(parent.id));
+}
 
 function openRoster(groupId) {
   const group = state.groups.find(entry => entry.id === groupId);
@@ -616,7 +626,7 @@ function renderAthletes() {
         && (!group || String(member.group_id) === group)
         && (!status || member.status === status);
     });
-    return [athlete.name, parent?.name, parent?.email].join(' ').toLocaleLowerCase('pl').includes(search)
+    return [athlete.name, parent?.name, parent?.email,...parentsFor(athlete.id).flatMap(parent=>[parent.name,parent.email,parent.phone])].join(' ').toLocaleLowerCase('pl').includes(search)
       && (status === 'none' ? memberships.length === 0 && !location && !group : (!location && !group && !status) || membershipMatches);
   }).sort((a,b)=>a.name.localeCompare(b.name,'pl') || a.id-b.id);
   const visible = directorySlice('athlete',matches);
@@ -657,7 +667,7 @@ function openAthleteDetail(id) {
   const credit = Math.max(0,-balance);
   const olderCharges = charges.filter(charge=>charge.month<state.now.slice(0,7)).reduce((total,charge)=>total+charge.balance,0);
   const previousDue = Math.max(0,Math.min(outstanding,olderCharges));
-  const tabs = [['data','Dane'],['groups','Grupy'],['parent','Rodzic'],['finances','Rozliczenia']];
+  const tabs = [['data','Dane'],['groups','Grupy'],['parent','Opiekunowie'],['finances','Rozliczenia']];
   $('#athlete-detail-title').textContent = athlete.name;
   $('#athlete-detail').innerHTML = `
     <div class="athlete-tabs" role="tablist" aria-label="Kartoteka zawodnika">${tabs.map(([key,label],index)=>`<button type="button" role="tab" id="athlete-tab-${key}" aria-controls="athlete-panel-${key}" aria-selected="${index===0}" tabindex="${index===0?0:-1}" data-athlete-tab="${key}">${label}</button>`).join('')}</div>
@@ -677,6 +687,12 @@ function openAthleteDetail(id) {
       <dl class="athlete-fields"><div><dt>Rodzic</dt><dd>${escape(parent?.name||'Nie podano')}</dd></div><div><dt>Email</dt><dd>${escape(parent?.email||'Nie podano')}</dd></div><div><dt>Telefon</dt><dd>${escape(parent?.phone||'Nie podano')}</dd></div><div><dt>Konto rodzica</dt><dd>${parent?.access_status==='blocked'?'Zablokowane':parentActive?'Aktywne':'Oczekuje na aktywację'}</dd></div></dl>
       ${admin&&parent?.access_status!=='blocked'&&!parentActive?`<button class="secondary" data-invite="${athlete.parent_id}">Utwórz link aktywacyjny</button>`:''}
       ${admin?`<button class="secondary" data-parent-access="${athlete.parent_id}" data-access-status="${parent?.access_status==='blocked'?'active':'blocked'}" data-profile="${id}">${parent?.access_status==='blocked'?'Odblokuj konto rodzica':'Zablokuj konto rodzica'}</button>`:''}
+      ${(state.guardian_links||[]).filter(link=>link.athlete_id===id&&!link.primary_guardian).map(link=>{
+        const guardian=state.parents.find(parent=>parent.id===link.user_id);
+        return `<div class="entry"><strong>${escape(guardian?.name||'Opiekun')}</strong><small>${escape(guardian?.email||'')} · ${escape(guardian?.phone||'Brak telefonu')} · ${guardian?.access_status==='blocked'?'Zablokowane':'Dostęp potwierdzony'}</small>${admin||athlete.parent_id===state.user.id||link.user_id===state.user.id?`<button class="secondary" data-revoke-guardian="${link.user_id}" data-child="${id}">Cofnij dostęp do dziecka</button>`:''}${admin?`<button class="secondary" data-parent-access="${link.user_id}" data-access-status="${guardian?.access_status==='blocked'?'active':'blocked'}" data-profile="${id}">${guardian?.access_status==='blocked'?'Odblokuj konto rodzica':'Zablokuj konto rodzica'}</button>`:''}</div>`;
+      }).join('')}
+      ${(state.guardian_invitations||[]).filter(invitation=>invitation.athlete_id===id).map(invitation=>`<div class="entry"><strong>${escape(invitation.email)}</strong><small>Oczekuje na przyjęcie zaproszenia</small>${admin||athlete.parent_id===state.user.id||invitation.invited_by===state.user.id?`<button class="secondary" data-cancel-guardian="${invitation.id}" data-child="${id}">Cofnij zaproszenie</button>`:''}</div>`).join('')}
+      <div class="trainer-actions"><button class="secondary" data-invite-guardian="${id}">Zaproś kolejnego opiekuna</button></div>
     </section>
     <section role="tabpanel" id="athlete-panel-finances" aria-labelledby="athlete-tab-finances" tabindex="0" hidden>
       <div class="athlete-finance-summary"><div><span>Do zapłaty</span><strong>${money(outstanding)}</strong></div><div><span>Nadpłata</span><strong>${money(credit)}</strong></div><div><span>Z poprzednich miesięcy</span><strong>${money(previousDue)}</strong></div></div>
@@ -778,39 +794,129 @@ $('#create-parent').onsubmit = async event => {
 
 function showAuth(mode='login') {
   for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
-  authMode = authInfo.needs_setup ? 'setup' : window.location.hash.startsWith('#activate/') ? 'activate' : mode;
-  const details={login:['Zaloguj się.','Wejdź do panelu rodzica, trenera lub administratora.','Zaloguj się'],register:['Konto rodzica.','Po rejestracji dodasz dziecko i wybierzesz grupę.','Utwórz konto rodzica'],setup:['Pierwsze uruchomienie.','Utwórz konto administratora tej lokalnej instalacji. Rodzice będą rejestrować osobne konta.','Utwórz konto administratora'],activate:['Aktywuj konto.','Ustaw własne hasło do konta przygotowanego przez administratora.','Aktywuj konto']};
+  authMode = authInfo.needs_setup ? 'setup' : window.location.hash.startsWith('#activate/') ? 'activate' : window.location.hash.startsWith('#reset/')?'reset':mode;
+  if(authMode==='reset')authInfo.mfa_required=false;
+  const details={login:['Zaloguj się.','Wejdź do panelu rodzica, trenera lub administratora.','Zaloguj się'],register:['Konto rodzica.','Po rejestracji dodasz dziecko i wybierzesz grupę.','Utwórz konto rodzica'],setup:['Pierwsze uruchomienie.','Utwórz konto administratora tej lokalnej instalacji. Rodzice będą rejestrować osobne konta.','Utwórz konto administratora'],activate:['Aktywuj konto.','Ustaw własne hasło do konta przygotowanego przez administratora.','Aktywuj konto'],forgot:['Odzyskaj dostęp','Podaj email swojego konta.','Przygotuj link'],reset:['Nowe hasło','Link działa jednorazowo przez 30 minut.','Zapisz nowe hasło']};
   const [title,description,submit]=details[authMode];
   $('#auth-title').textContent=title;
   $('#auth-description').textContent=description;
   $('#auth-submit').textContent=submit;
   for(const id of ['auth-name-label','auth-phone-label']) document.getElementById(id).hidden=!['register','setup'].includes(authMode);
   $('#auth-form [name=name]').required=['register','setup'].includes(authMode);
-  const email=$('#auth-form [name=email]');email.closest('label').hidden=authMode==='activate';email.required=authMode!=='activate';
-  $('#auth-form [name=password]').autocomplete=authMode==='login'?'current-password':'new-password';
-  $('#auth-toggle').hidden=['setup','activate'].includes(authMode);
+  const email=$('#auth-form [name=email]');email.closest('label').hidden=['activate','reset'].includes(authMode);email.required=!['activate','reset'].includes(authMode);
+  const password=$('#auth-form [name=password]');password.autocomplete=authMode==='login'?'current-password':'new-password';password.closest('label').hidden=authMode==='forgot';password.required=authMode!=='forgot';password.disabled=authMode==='forgot';$('#password-help').hidden=authMode==='forgot';
+  $('#auth-toggle').hidden=['setup','activate','reset'].includes(authMode);
   $('#auth-toggle').textContent=authMode==='login'?'Nie masz konta? Zarejestruj się jako rodzic':'Masz konto? Zaloguj się';
   $('#auth-error').hidden=true;
+  $('#auth-message').hidden=true;
+  $('#auth-forgot').hidden=authMode!=='login';
+  $('#auth-form').hidden=Boolean(authInfo.mfa_required);
+  $('#mfa-panel').hidden=!authInfo.mfa_required;
+  if(window.location.hash.startsWith('#guardian/'))$('#auth-description').textContent='Zaloguj się lub utwórz konto na adres, na który otrzymano zaproszenie opiekuna.';
   switchView('auth');
+  if(authInfo.mfa_required)showMfa().catch(error=>{$('#mfa-error').textContent=error.message;$('#mfa-error').hidden=false;});
 }
 
 async function initialize() {
   authInfo=await api('auth/status');
+  if(window.location.hash.startsWith('#reset/')){authInfo.user=null;showAuth();return;}
   if(!authInfo.user){showAuth();return;}
   await refresh();
-  switchView(window.location.hash.slice(1));
+  if(window.location.hash.startsWith('#guardian/'))await showGuardianAcceptance();
+  else switchView(window.location.hash.slice(1));
 }
 $('#auth-toggle').onclick=()=>showAuth(authMode==='login'?'register':'login');
 $('#auth-form').onsubmit=async event=>{
   event.preventDefault();const form=event.target,button=$('#auth-submit');button.disabled=true;
   try {
     const body=Object.fromEntries(new FormData(form));
-    if(authMode==='activate') body.token=window.location.hash.slice('#activate/'.length);
-    await api('auth/'+authMode,body);
+    if(['activate','reset'].includes(authMode)) body.token=window.location.hash.slice(('#'+authMode+'/').length);
+    const result=await api('auth/'+authMode,body);
+    if(authMode==='forgot'){$('#auth-message').textContent=result.message;$('#auth-message').hidden=false;return;}
+    if(authMode==='reset'){await api('auth/logout',{});history.replaceState(null,'','/');authInfo=await api('auth/status');showAuth('login');$('#auth-message').textContent='Hasło zmienione. Zaloguj się ponownie.';$('#auth-message').hidden=false;return;}
     form.reset();authInfo=await api('auth/status');
-    await refresh();window.location.hash=authInfo.user.role==='admin'?'groups':authInfo.user.role==='trainer'?'coach':'parent';switchView(window.location.hash.slice(1));
+    if(authInfo.mfa_required){showAuth();return;}
+    await enterPanel();
   }catch(error){$('#auth-error').textContent=error.message;$('#auth-error').hidden=false;}finally{button.disabled=false;}
 };
+$('#auth-forgot').onclick=()=>showAuth('forgot');
+async function enterPanel() {
+  authInfo=await api('auth/status');
+  if(!authInfo.user){showAuth();return;}
+  await refresh();
+  if(window.location.hash.startsWith('#guardian/'))return showGuardianAcceptance();
+  window.location.hash=authInfo.user.role==='admin'?'groups':authInfo.user.role==='trainer'?'coach':'children';
+  switchView(window.location.hash.slice(1));
+}
+async function showMfa() {
+  $('#auth-title').textContent='Potwierdź logowanie';
+  $('#auth-description').textContent='Zabezpieczenie konta administratora';
+  $('#auth-toggle').hidden=true;$('#auth-forgot').hidden=true;
+  $('#mfa-error').hidden=true;$('#mfa-recovery').hidden=true;$('#mfa-form').hidden=false;
+  $('#mfa-form').reset();
+  $('#mfa-instructions').textContent=authInfo.mfa_enrolled?'Podaj aktualny kod z aplikacji uwierzytelniającej.':'Dodaj Evolution Academy do aplikacji uwierzytelniającej na swoim telefonie.';
+  $('#mfa-enrollment').hidden=authInfo.mfa_enrolled;
+  $('#mfa-replace-label').hidden=!authInfo.mfa_enrolled;
+  if(!authInfo.mfa_enrolled){const result=await api('auth/mfa/setup',{});$('#mfa-secret').value=result.secret;}
+}
+$('#mfa-form').onsubmit=async event=>{
+  event.preventDefault();const button=event.target.querySelector('button');button.disabled=true;
+  try {
+    const result=await api('auth/mfa/verify',{code:event.target.elements.code.value,replace_device:event.target.elements.replace_device.checked});
+    $('#mfa-error').hidden=true;$('#mfa-secret').value='';event.target.reset();
+    if(result.reenroll){authInfo=await api('auth/status');showAuth();return;}
+    if(result.recovery_codes){
+      $('#mfa-enrollment').hidden=true;$('#mfa-form').hidden=true;$('#mfa-recovery').hidden=false;
+      $('#mfa-codes').textContent=result.recovery_codes.join('\n');
+    }else await enterPanel();
+  }catch(error){$('#mfa-error').textContent=error.message;$('#mfa-error').hidden=false;}
+  finally{button.disabled=false;}
+};
+$('#mfa-continue').onclick=async()=>{$('#mfa-codes').textContent='';await enterPanel();};
+$('#mfa-back').onclick=async()=>{await api('auth/logout',{});window.location.assign('/');};
+document.addEventListener('click',async event=>{
+  const button=event.target.closest('[data-invite-guardian],[data-revoke-guardian],[data-cancel-guardian]');
+  if(!button)return;
+  if(button.dataset.inviteGuardian){
+    $('#guardian-form').reset();$('#guardian-form [name=athlete_id]').value=button.dataset.inviteGuardian;
+    $('#guardian-error').hidden=true;openDialog('guardian-dialog');return;
+  }
+  if(!confirm('Cofnąć dostęp lub zaproszenie do tego dziecka?'))return;
+  button.disabled=true;
+  try {
+    const id=Number(button.dataset.child),action=button.dataset.revokeGuardian?'revoke':'cancel';
+    await api('guardians/'+action,{athlete_id:id,user_id:Number(button.dataset.revokeGuardian),id:Number(button.dataset.cancelGuardian)});
+    await refresh();
+    if(state.athletes.some(athlete=>athlete.id===id)){openAthleteDetail(id);selectAthleteTab('parent');}
+    else $('#athlete-detail-dialog').close();
+  }catch(error){notice(error.message,true);}finally{button.disabled=false;}
+});
+$('#guardian-form').onsubmit=async event=>{
+  event.preventDefault();const form=event.target,button=form.querySelector('button[type=submit]');button.disabled=true;
+  try{
+    const id=Number(form.elements.athlete_id.value),result=await api('guardians/invite',{athlete_id:id,email:form.elements.email.value});
+    $('#guardian-dialog').close();await refresh();openAthleteDetail(id);selectAthleteTab('parent');notice(result.message);
+  }catch(error){$('#guardian-error').textContent=error.message;$('#guardian-error').hidden=false;}finally{button.disabled=false;}
+};
+async function showGuardianAcceptance() {
+  switchView('children');openDialog('guardian-accept-dialog');
+  $('#guardian-accept').hidden=true;$('#guardian-accept-error').hidden=true;
+  $('#guardian-accept-description').textContent='Sprawdzanie zaproszenia…';
+  try {
+    const result=await api('guardians/preview',{token:window.location.hash.slice('#guardian/'.length)});
+    $('#guardian-accept-description').textContent=`Czy przyjmujesz dostęp do kartoteki dziecka: ${result.child}? Konto: ${authInfo.user.email}`;
+    $('#guardian-accept').hidden=false;
+  }catch(error){$('#guardian-accept-description').textContent=error.message;}
+}
+$('#guardian-accept').onclick=async()=>{
+  const button=$('#guardian-accept');button.disabled=true;
+  try{
+    await api('guardians/accept',{token:window.location.hash.slice('#guardian/'.length)});
+    $('#guardian-accept-dialog').close();history.replaceState(null,'','/#children');await enterPanel();
+    notice('Dziecko jest już widoczne na Twoim koncie.');
+  }catch(error){$('#guardian-accept-error').textContent=error.message;$('#guardian-accept-error').hidden=false;}finally{button.disabled=false;}
+};
+$('#guardian-switch').onclick=async()=>{await api('auth/logout',{});window.location.reload();};
 $('#logout').onclick=async()=>{
   try{await api('auth/logout',{});window.location.assign('/');}catch(error){notice(error.message,true);}
 };
@@ -847,8 +953,8 @@ function renderCoach() {
     return `<div class="entry"><strong>${escape(termLabel(session))}</strong><small>${escape(group.location)} · ${escape(group.name)}</small>${session.excluded?'<span class="pill">Zajęcia odwołane / dzień wolny</span>':''}</div>`;
   }).join('')||'<p class="hint">Brak terminów w wybranym miesiącu.</p>';
   $('#coach-roster').innerHTML=groups.map(group=>`<details class="coach-group" ${groups.length===1?'open':''}><summary>${escape(group.location)} · ${escape(group.name)} <span class="pill">${group.member_count} / ${group.capacity}</span></summary>${state.memberships.filter(member=>member.group_id===group.id).map(member=>{
-    const athlete=state.athletes.find(athlete=>athlete.id===member.athlete_id),parent=state.parents.find(parent=>parent.id===athlete.parent_id),note=state.trainer_notes.find(note=>note.athlete_id===athlete.id);
-    return `<div class="entry"><strong>${escape(athlete.name)}</strong> ${member.status==='trial'?'<span class="pill">Próba</span>':''}<small>Data urodzenia: ${escape(athlete.birth_date||'Nie podano')}<br>Rodzic: ${escape(parent?.name||'—')}<br>Telefon: ${escape(parent?.phone||'Nie podano')}<br>Email: ${escape(parent?.email||'Nie podano')}</small>${note?.body?`<p class="coach-note-body">${escape(note.body)}</p>`:''}<button class="secondary" data-coach-note="${athlete.id}">${note?.body?'Edytuj notatkę':'Dodaj notatkę'}</button></div>`;
+    const athlete=state.athletes.find(athlete=>athlete.id===member.athlete_id),note=state.trainer_notes.find(note=>note.athlete_id===athlete.id);
+    return `<div class="entry"><strong>${escape(athlete.name)}</strong> ${member.status==='trial'?'<span class="pill">Próba</span>':''}<small>Data urodzenia: ${escape(athlete.birth_date||'Nie podano')}</small>${parentsFor(athlete.id).map(parent=>`<small>Opiekun: ${escape(parent.name)}<br>Telefon: ${escape(parent.phone||'Nie podano')}<br>Email: ${escape(parent.email)}</small>`).join('')}${note?.body?`<p class="coach-note-body">${escape(note.body)}</p>`:''}<button class="secondary" data-coach-note="${athlete.id}">${note?.body?'Edytuj notatkę':'Dodaj notatkę'}</button></div>`;
   }).join('')||'<p class="hint">Brak zawodników w grupie.</p>'}</details>`).join('')||'<p class="hint">Administrator nie przypisał Ci jeszcze grup.</p>';
 }
 function openCoachNote(id) {

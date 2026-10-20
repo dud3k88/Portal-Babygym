@@ -123,3 +123,10 @@ select:not([multiple]):not([size]), select[size="1"] {
 .coach-group { margin-top: 16px; }
 .coach-group > summary { cursor: pointer; padding: 16px; border: 1px solid var(--line); border-left: 4px solid var(--record-accent); border-radius: 10px; margin-bottom: 12px; font-weight: 600; }
 .coach-note-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+#mfa-codes { font-size: 16px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; padding: 16px; background: #fff7fa; border-left: 4px solid var(--record-accent); }
+#mfa-secret { font-family: monospace; font-size: 14px; }
+#mfa-panel { margin-top: 20px; }
+#mfa-panel [hidden], #auth-form[hidden] { display: none; }
+#mfa-panel .tertiary, #auth-forgot { margin-top: 16px; }
+#mfa-replace-label { display: flex; align-items: flex-start; gap: 10px; line-height: 1.5; }
+#mfa-replace-label input { flex: 0 0 auto; width: 16px; height: 16px; margin-top: 2px; }

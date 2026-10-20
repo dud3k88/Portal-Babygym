@@ -1,3 +1,4 @@
+import { enrollMfa } from './mfa-helper.js';
 import { test, expect } from '@playwright/test';
 import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -31,6 +32,7 @@ test('placówka, publiczny zapis, blokada rodzica, dziennik i mobilny panel',asy
  await page.locator('#auth-form [name=email]').fill('admin@example.org');
  await page.locator('#auth-form [name=password]').fill('admin-test-password');
  await page.locator('#auth-submit').click();
+ await enrollMfa(page);
  await page.locator('nav [data-view=locations]').click();
  await page.locator('#locations [data-new-location]').first().click();
  const form=page.locator('#save-location');

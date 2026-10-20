@@ -3,9 +3,11 @@
 Data: 20.10.2026. Punkt wyjścia: commit `da0170b`. Źródło wymagań:
 [SPECYFIKACJA.md](SPECYFIKACJA.md). Dokument opisuje stan zastany i oddzielnie etap 1.
 Nie jest deklaracją wdrożenia całej specyfikacji ani gotowości produkcyjnej.
-Aktualizacja: wdrożono również [etap 2A](ETAP-2A.md) — trzy role i podstawowy panel
-trenera. Poniższe tabele stanu zastanego oraz stanu po etapie 1 pozostają historycznym
-punktem odniesienia; bieżące ograniczenia etapu 2 opisuje nowy raport.
+Aktualizacja: wdrożono [etap 2A](ETAP-2A.md) — trzy role i podstawowy panel
+trenera — oraz [etap 2B](ETAP-2B.md): MFA, reset hasła i dodatkowych opiekunów
+z lokalnym dostarczaniem testowym linków. Poniższe tabele stanu zastanego oraz stanu
+po etapie 1 pozostają historycznym punktem odniesienia; bieżące ograniczenia etapu 2
+opisują raporty. Produkcyjna poczta i datowane zakresy trenera nadal wymagają wdrożenia.
 
 ## 1. Stos i działające podstawy
 

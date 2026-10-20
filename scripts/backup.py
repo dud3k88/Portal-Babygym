@@ -27,7 +27,8 @@ def digest(path):
 
 def verify(source):
     manifest = json.loads((source / 'manifest.json').read_text())
-    if manifest.get('format') != 1 or set(manifest['files']) not in ({'evolution.sqlite'}, {'evolution.sqlite', 'logo'}):
+    names=set(manifest['files'])
+    if manifest.get('format') not in (1,2) or 'evolution.sqlite' not in names or names-{'evolution.sqlite','logo','evolution.sqlite.mfa-key'}:
         raise ValueError('Nieobsługiwany format kopii.')
     for name, checksum in manifest['files'].items():
         if digest(source / name) != checksum:
@@ -46,6 +47,18 @@ def create(args):
         with database(source) as original, sqlite3.connect(target / 'evolution.sqlite') as copy:
             original.backup(copy)
         names = ['evolution.sqlite']
+        if os.environ.get('MFA_ENCRYPTION_KEY') and not args.external_mfa_key:
+            raise ValueError('Klucz MFA z ENV wymaga osobnej kopii i flagi --external-mfa-key.')
+        key = pathlib.Path(args.mfa_key or os.environ.get('MFA_KEY_PATH') or str(source)+'.mfa-key')
+        if key.is_file() and not args.external_mfa_key:
+            if len(key.read_bytes()) != 32:
+                raise ValueError('Nieprawidłowy klucz MFA.')
+            shutil.copyfile(key, target / 'evolution.sqlite.mfa-key'); names.append('evolution.sqlite.mfa-key')
+        else:
+            with database(source) as original:
+                has_mfa = original.execute("SELECT 1 FROM sqlite_master WHERE name='admin_mfa'").fetchone()
+                if has_mfa and original.execute('SELECT 1 FROM admin_mfa UNION ALL SELECT 1 FROM mfa_pending LIMIT 1').fetchone() and not args.external_mfa_key:
+                    raise ValueError('Brak klucza MFA. Podaj --mfa-key lub --external-mfa-key, jeśli klucz ENV zabezpieczono osobno.')
         if args.logo:
             logo = pathlib.Path(args.logo)
             if not logo.is_file():
@@ -53,7 +66,7 @@ def create(args):
             shutil.copyfile(logo, target / 'logo'); names.append('logo')
         for name in names:
             os.chmod(target / name, 0o600)
-        manifest = {'format': 1, 'created_at': datetime.now(timezone.utc).isoformat(),
+        manifest = {'format': 2, 'external_mfa_key_required': args.external_mfa_key, 'created_at': datetime.now(timezone.utc).isoformat(),
                     'files': {name: digest(target / name) for name in names},
                     'row_counts': check(target / 'evolution.sqlite')}
         (target / 'manifest.json').write_text(json.dumps(manifest, indent=2))
@@ -83,6 +96,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
     backup = sub.add_parser('create'); backup.add_argument('--db', required=True); backup.add_argument('--logo'); backup.add_argument('--output', required=True)
+    backup.add_argument('--mfa-key'); backup.add_argument('--external-mfa-key', action='store_true')
     validation = sub.add_parser('verify'); validation.add_argument('--source', required=True)
     recovery = sub.add_parser('restore'); recovery.add_argument('--source', required=True); recovery.add_argument('--target', required=True)
     args = parser.parse_args()

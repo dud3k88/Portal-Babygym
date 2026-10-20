@@ -1,3 +1,4 @@
+from mfa_helper import enroll
 """Foundations: location lifecycle, privacy, access revocation, audit, backup/restore."""
 import http.cookiejar, json, os, pathlib, sqlite3, subprocess, tempfile, time, urllib.error, urllib.request
 
@@ -27,7 +28,9 @@ with tempfile.TemporaryDirectory() as temp:
  p=start()
  try:
   admin=Client();guest=Client();parent=Client()
-  admin_id=admin.call('auth/setup',{'name':'Admin','email':'admin@example.org','password':'test-admin-password'},201)['user']['id']
+  admin.call('auth/setup',{'name':'Admin','email':'admin@example.org','password':'test-admin-password'},201)
+  enroll(admin.call, '2099-09-01T10:00:00Z')
+  admin_id=admin.call('auth/status')['user']['id']
   parent_id=parent.call('auth/register',{'name':'Rodzic','email':'parent@example.org','password':'test-parent-password'},201)['user']['id']
   location=admin.call('locations',{'name':'Przedszkole','city':'Poznań','address':'Testowa 1','phone':'123456789','email':'office@example.org','contact_name':'Kontakt','notes':'PRIVATE-LOCATION-NOTE'},201)['id']
   other=admin.call('locations',{'name':'Drugie'},201)['id']
@@ -113,7 +116,7 @@ with tempfile.TemporaryDirectory() as temp:
   for secret in ['password_hash','token_hash','test-parent-password',token]:assert secret not in dump
   with sqlite3.connect(dbpath) as db:
    assert db.execute('PRAGMA foreign_key_check').fetchall()==[]
-   assert [r[0] for r in db.execute('SELECT version FROM schema_migrations ORDER BY version')]==[1,2]
+   assert [r[0] for r in db.execute('SELECT version FROM schema_migrations ORDER BY version')]==[1,2,3]
    for query in ['UPDATE audit_logs SET action="tamper"','DELETE FROM audit_logs']:
     try:db.execute(query);raise AssertionError('audit writable')
     except sqlite3.IntegrityError:db.rollback()

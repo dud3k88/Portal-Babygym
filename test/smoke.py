@@ -1,3 +1,4 @@
+from mfa_helper import enroll
 import json, os, subprocess, tempfile, time, urllib.request, urllib.error, http.cookiejar
 with tempfile.TemporaryDirectory() as directory:
  opener=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
@@ -54,6 +55,7 @@ with tempfile.TemporaryDirectory() as directory:
    assert migrated_db.execute('SELECT access_status FROM users WHERE id=42').fetchone()[0]=='active'
 
   request('/api/auth/setup',{'name':'Administrator testowy','email':'admin@example.org','password':'development-test-password'})
+  enroll(request, '2099-08-31T22:00:00Z', '/api/')
   assert request('/api/state')['enrollments'][0]['balance']==9000
   migrated=request('/api/state')
   legacy_id=migrated['locations'][0]['id']

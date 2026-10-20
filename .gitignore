@@ -6,3 +6,5 @@ test-results/
 __pycache__/
 backups/
 *.before-v2-*.sqlite
+*.mfa-key
+security-outbox/

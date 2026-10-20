@@ -15,7 +15,11 @@ python3 scripts/backup.py restore --source /tmp/ea-backup-20261020 --target /tmp
 Jeśli nie wgrywano logo, pomiń `--logo`. Jeśli używasz DB_PATH/LOGO_PATH, podaj
 rzeczywiste ścieżki. `/tmp` to przykład do testów; trwałe kopie przechowuj w
 chronionym miejscu poza komputerem z aplikacją, z ograniczonym dostępem i szyfrowaniem.
-Kopia zawiera dane dzieci i rodziców, hashe haseł i sesji. Nie wgrywaj jej do repo.
+Kopia zawiera dane dzieci i rodziców, hashe haseł i sesji, a od etapu 2B także
+plik klucza MFA. Nie wgrywaj jej do repo. Domyślnie klucz jest odczytywany z
+`<DB_PATH>.mfa-key`; dla innego pliku użyj `--mfa-key /pełna/ścieżka` lub
+`MFA_KEY_PATH`. Jeśli używasz `MFA_ENCRYPTION_KEY`, zabezpiecz osobno ten sekret
+i dodaj `--external-mfa-key`; odtworzony serwer wymaga tej samej wartości ENV.
 
 3. Przetestuj nowy kod na odtworzonej kopii przy zatrzymanej aplikacji głównej:
 
@@ -26,6 +30,12 @@ DB_PATH=/tmp/ea-restore-20261020/evolution.sqlite LOGO_PATH=/tmp/ea-restore-2026
 Sprawdź logowanie, liczbę dzieci/grup/naliczeń, sumy sald i historię. Zatrzymaj test.
 Dopiero wtedy uruchom nowy kod na właściwej bazie. Migracja 2 przed przebudową ograniczenia ról tworzy snapshot obok DB (`*.before-v2-*.sqlite`, 0600), zachowuje rekordy i sprawdza FK. Nie zastępuje to pełnej kopii z logo. Szczegóły i wycofanie: [ETAP-2A.md](ETAP-2A.md). Migracja 1 jest addytywna,
 transakcyjna i rejestrowana w `schema_migrations`; nie kasuje danych.
+Migracja 3 jest addytywna i transakcyjna, dodaje MFA/reset/opiekunów, utrwala
+płatnika i kończy stare sesje administratorów. Po aktualizacji administrator
+loguje się hasłem i konfiguruje aplikację uwierzytelniającą. Zapisz kody zapasowe.
+Szczegóły: [ETAP-2B.md](ETAP-2B.md). Brak lub niewłaściwy klucz przy istniejącym MFA
+zatrzymuje start aplikacji — nie usuwaj tabel ani nie generuj nowego klucza,
+tylko przywróć właściwy klucz z kopii.
 
 ## Wycofanie
 
@@ -52,6 +62,7 @@ python3 test/accounts.py
 python3 test/public_signup.py
 python3 test/foundations.py
 python3 test/trainers.py
+python3 test/security.py
 ```
 
 Każdy test integracyjny używa osobnej tymczasowej bazy, portu i fikcyjnych danych.
@@ -59,9 +70,12 @@ Testy nie wysyłają wiadomości i nie obciążają kont. Brak dostawców produk
 Przeglądarkowy scenariusz etapu 1: `npx playwright install chromium`, następnie `npm run test:e2e`. Szczegóły w `ETAP-1.md`.
 
 Zmienne obsługiwane: HOST (domyślnie 127.0.0.1), PORT (3000), DB_PATH,
-LOGO_PATH, COOKIE_SECURE=1 dla HTTPS. `npm start` uruchamia proces, nie publikuje
+LOGO_PATH, COOKIE_SECURE=1 dla HTTPS, MFA_KEY_PATH / MFA_ENCRYPTION_KEY
+(patrz ETAP-2B.md), SECURITY_OUTBOX_DIR (prywatny katalog lokalnej skrzynki testowej).
+`npm start` uruchamia proces, nie publikuje
 strony. Publiczne wdrożenie wymaga prywatnego trwałego dysku, HTTPS/reverse proxy,
-odseparowanych sekretów i kopii, monitorowania oraz ukończenia MFA/resetu/zgód/SOM.
+odseparowanych sekretów i kopii, monitorowania oraz produkcyjnego dostarczania
+resetów/zaproszeń, weryfikacji email i ukończenia zgód/SOM.
 Etap 1 nie jest deklaracją gotowości do zbierania rzeczywistych danych dzieci.
 Nie wystawiaj formularza tworzenia pierwszego admina publicznie przed konfiguracją.
 Limity IP są obecnie w pamięci pojedynczego procesu; przed proxy/wieloma workerami

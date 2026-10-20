@@ -1,3 +1,4 @@
+from mfa_helper import enroll
 """Public catalog privacy and atomic account + athlete + enrollment creation."""
 import http.cookiejar, json, os, sqlite3, subprocess, tempfile, time, urllib.error, urllib.request
 
@@ -20,6 +21,7 @@ with tempfile.TemporaryDirectory() as d:
    except urllib.error.URLError:time.sleep(.1)
   else:raise AssertionError('Server did not start')
   admin.call('/api/auth/setup',{'name':'Admin','email':'admin@example.org','password':'development-password'},status=201)
+  enroll(admin.call, '2099-08-31T22:00:00Z', '/api/')
   location=admin.call('/api/locations',{'name':'Przedszkole'},status=201)['id']
   trainer=admin.call('/api/trainers',{'name':'Anna Trener','email':'private-trainer@example.org','phone':'555777999'},status=201)['id']
   base={'location_id':location,'name':'Liski','capacity':1,'price':5000,'trial_price':0,'trials':True,'dates':['2099-09-03T13:00','2099-09-10T13:00'],'trainer_ids':[trainer]}

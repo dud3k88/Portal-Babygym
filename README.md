@@ -8,6 +8,7 @@ System zapisów na zajęcia, kartotek zawodników i miesięcznych należności. 
 - [Audyt 10 modułów, model danych, ryzyka i plan etapów](docs/AUDYT-I-PLAN.md)
 - [Wdrożony etap 1 i checklista odbioru](docs/ETAP-1.md)
 - [Etap 2A: konta i panel trenera, migracja trzech ról](docs/ETAP-2A.md)
+- [Etap 2B: MFA, odzyskiwanie hasła i dodatkowi opiekunowie](docs/ETAP-2B.md)
 - [Kopia, testowe odtworzenie i procedura aktualizacji](docs/OPERACJE.md)
 
 Przed pierwszym uruchomieniem tej aktualizacji zatrzymaj aplikację i wykonaj kopię
@@ -15,6 +16,8 @@ bazy oraz logo według instrukcji. Migracja 1 dodaje dane/status placówki, kont
 Migracja 2 dodaje rolę i konta trenerów. Przed przebudową ograniczenia ról tworzy
 automatyczny snapshot bazy `*.before-v2-*.sqlite` (bez logo); zachowuje wszystkie
 konta i ich identyfikatory, hashe haseł i sesje. Istniejące identyfikatory i naliczenia pozostają.
+Migracja 3 dodaje MFA, reset i dodatkowych opiekunów oraz utrwala płatnika naliczeń.
+Wymaga ponownego zalogowania administratora i konfiguracji MFA; kończy jego stare sesje.
 Nie uruchamiaj wcześniejszego kodu na bazie z nowymi triggerami audytu; wycofanie
 wymaga odtworzenia kopii do osobnego katalogu.
 
@@ -33,17 +36,17 @@ W chmurze katalog projektu to `/workspace/Portal-Babygym`. Używaj istniejącego
 
 ## Pierwsze konto i przeniesienie starszych danych
 
-1. Po pierwszym uruchomieniu otwórz stronę i utwórz konto **administratora**. Ustaw własny adres email i hasło (10–200 znaków). Nie ma domyślnego hasła. Jednorazowy formularz konfiguracji zamyka się po utworzeniu administratora.
+1. Po pierwszym uruchomieniu otwórz stronę i utwórz konto **administratora**. Ustaw własny adres email i hasło (10–200 znaków), dodaj podany klucz w aplikacji uwierzytelniającej i potwierdź kod TOTP. Zapisz kody zapasowe. Nie ma domyślnego hasła ani dostępu administratora bez MFA. Jednorazowy formularz konfiguracji zamyka się po utworzeniu administratora.
 2. Dane ze starszych wersji są przenoszone automatycznie: powstają kartoteki dzieci, rodziców i przypisania do grup. Dawne wpisy tego samego dziecka u tego samego rodzica są łączone w jedną kartotekę. Istniejące rozliczenia i korekty pozostają zachowane.
 3. Rodzice ze starszych zapisów mają profil bez ustawionego hasła. W kartotece dziecka administrator wybiera **Link aktywacyjny rodzica** i przekazuje go właściwemu rodzicowi. Link jest jednorazowy, ważny 24 godziny; wygenerowanie nowego unieważnia poprzedni. Rodzic ustawia własne hasło. Rejestracja tego samego emaila nie przejmuje starego konta.
 4. Nowy rodzic może sam zarejestrować nowe konto przez ekran logowania. Przed testowaniem panelu rodzica wyloguj administratora lub użyj osobnego profilu przeglądarki / okna prywatnego.
 
-Link z adresem localhost działa tylko na komputerze z serwerem. Wersja lokalna nie daje jeszcze rodzicom dostępu przez Internet. Docelowe wdrożenie wymaga własnego adresu HTTPS. Weryfikacja emaila, odzyskiwanie hasła i wysyłka wiadomości nie są jeszcze podłączone. Używaj wyłącznie fikcyjnych danych do czasu przygotowania wdrożenia produkcyjnego.
+Link z adresem localhost działa tylko na komputerze z serwerem. Wersja lokalna nie daje jeszcze rodzicom dostępu przez Internet. Docelowe wdrożenie wymaga własnego adresu HTTPS. Reset hasła i zaproszenia opiekunów działają z lokalną skrzynką testową; produkcyjna wysyłka i weryfikacja emaila nie są podłączone. Używaj wyłącznie fikcyjnych danych do czasu przygotowania wdrożenia produkcyjnego.
 
 ## Panel administratora
 
 - **Grupy:** najpierw wybierz lokalizację, potem grupę. Grupy są wyświetlane jedna pod drugą. Wiersz pokazuje termin, prowadzącego i liczbę zapisanych osób względem limitu. Przycisk **Wejdź** otwiera osobny widok grupy z zawodnikami, harmonogramem, miesięczną opłatą i przyciskiem edycji ustawień. Wybrany miesiąc dotyczy szczegółów harmonogramu, nie liczebności grupy. Liczebność wynika ze stałych przypisań, a nie z liczby miesięcznych naliczeń.
-- **Zawodnicy:** jedna lista kartotek, po jednym wierszu na zawodnika niezależnie od liczby grup i lokalizacji. Wyszukiwanie po dziecku, rodzicu lub emailu. Po wejściu dostępne są zakładki „Dane”, „Grupy”, „Rodzic” i „Rozliczenia”; przypisania nie są powielane na liście głównej. Każdy zawodnik ma przypisanego rodzica; administrator może dodać profil rodzica przed dodaniem dziecka. Zmiana przypisanego rodzica przenosi dostęp do kartoteki i rozliczeń dziecka.
+- **Zawodnicy:** jedna lista kartotek, po jednym wierszu na zawodnika niezależnie od liczby grup i lokalizacji. Wyszukiwanie po dziecku i wszystkich jego opiekunach. Po wejściu dostępne są zakładki „Dane”, „Grupy”, „Opiekunowie” i „Rozliczenia”; przypisania nie są powielane na liście głównej. Każdy zawodnik ma głównego rodzica i może mieć dodatkowych opiekunów po przyjęciu zaproszenia. Administrator może dodać profil rodzica przed dodaniem dziecka. Zmiana głównego rodzica przenosi jego dostęp, ale zachowuje historycznych płatników i salda.
 - **Lokalizacje:** rejestr przedszkoli wybieranych z listy. Nazwy różniące się tylko wielkością liter lub dodatkowymi spacjami nie tworzą duplikatów. Kartoteka zawiera też adres, kontakt i notatki administratora oraz status aktywna/wstrzymana/archiwalna. Dwa ostatnie zamykają nowe zapisy i tworzenie grup, zachowując istniejący grafik i saldo. Poprawienie nazwy aktualizuje etykiety w całym systemie, zachowując identyfikatory i wykluczenia. Nie zgadujemy, czy różne literówki oznaczają jedno miejsce.
 - **Dni wolne:** dzień lub zakres dla całego systemu, wybranych lokalizacji albo grup. Lokalizacje mogą mieć dni wolne jeszcze przed utworzeniem grup. Święta dodaje administrator — nie są automatycznie importowane.
 - **Trenerzy:** profile prowadzących i przypisania wielu trenerów do jednej grupy. Dodanie profilu nie tworzy jeszcze konta. Przycisk **Utwórz konto** generuje link aktywacyjny do ręcznego przekazania trenerowi. Edycja profilu pozwala zmienić kontakt i status. Nieaktywny lub archiwalny trener traci dostęp i sesje. Obecności, zastępstwa i wynagrodzenia pozostają kolejnymi etapami.
@@ -152,7 +155,7 @@ filtrów; miesiąc odnosi się do należności, nie daty wykonania korekty. Sald
 nie potwierdza wpłaty. Listy zawodników, należności i korekt mają strony po 20
 pozycji; liczniki i suma salda obejmują wszystkie wyniki wybranych filtrów.
 
-Administrator może zablokować konto rodzica w kartotece dziecka → Rodzic. Kończy to sesje i unieważnia zaproszenia; odblokowanie wymaga ponownego logowania. Operacja jest zapisywana w dzienniku.
+Administrator może zablokować konto rodzica w kartotece dziecka → Opiekunowie. Kończy to sesje i unieważnia zaproszenia oraz reset hasła; odblokowanie wymaga ponownego logowania. Operacja jest zapisywana w dzienniku.
 
 ## Panel trenera (etap 2A)
 
@@ -163,5 +166,29 @@ widzą autor i Administrator, nigdy Rodzic. Dane finansowe i cudze grupy są
 niedostępne w API. Odebranie przypisania usuwa dostęp do grupy i jej dzieci.
 Trener nie może wysyłać wiadomości rodzicom ani sam zmieniać przypisań.
 
-W bazie są dokładnie trzy role: Administrator, Trener, Rodzic. MFA, odzyskiwanie
-hasła i drugi zweryfikowany opiekun to następny etap 2B. Nie są jeszcze wdrożone.
+W bazie są dokładnie trzy role: Administrator, Trener, Rodzic.
+
+## Bezpieczeństwo i dodatkowi opiekunowie (etap 2B)
+
+Administrator loguje się hasłem i kodem z aplikacji uwierzytelniającej. Kod zapasowy
+pozwala na jednorazowe logowanie lub konfigurację nowego telefonu. Klucz szyfrowania
+MFA znajduje się domyślnie w `data/evolution.sqlite.mfa-key` i musi być zachowany
+razem z bazą. Narzędzie kopii zapasowych uwzględnia go automatycznie.
+
+Aby testować **Nie pamiętam hasła** oraz **Kartoteka → Opiekunowie → Zaproś kolejnego opiekuna**:
+
+```sh
+SECURITY_OUTBOX_DIR="$PWD/data/security-outbox" npm run dev
+```
+
+Linki są zapisywane w prywatnych plikach JSON we wskazanym katalogu. Nie wysyłamy
+emaili. Nowy opiekun zakłada własne konto na zaproszony email, otwiera link i
+potwierdza zaproszenie. Widzi tylko udostępnione dziecko, jego grupy i naliczenia.
+Główny rodzic/administrator może cofnąć ten dostęp bez kasowania historii.
+Reset hasła unieważnia stare sesje i nie wyłącza MFA administratora.
+
+Konfiguracja klucza, kopia, przyjmowanie zaproszeń i ograniczenia wersji testowej:
+[ETAP-2B.md](docs/ETAP-2B.md). Testy nowego zakresu: `python3 test/security.py`,
+`npm test` oraz `npm run test:e2e`. Następne etapy dotyczą sezonów, okresów i statusów
+uczestnictwa, a potem obecności. Produkcyjna poczta, zgody/SOM i płatności pozostają
+do osobnego wdrożenia.

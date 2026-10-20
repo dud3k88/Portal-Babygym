@@ -108,3 +108,34 @@ export function migrateTrainerAccess(db,databasePath) {
   }catch(error){if(db.isTransaction)db.exec('ROLLBACK');throw error;}
   finally{db.exec('PRAGMA foreign_keys=ON');}
 }
+
+export function migrateAccountSecurity(db) {
+  if(db.prepare('SELECT version FROM schema_migrations WHERE version=3').get())return;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.exec(`
+      CREATE TABLE admin_mfa(user_id INTEGER PRIMARY KEY REFERENCES users(id),secret TEXT NOT NULL,last_step INTEGER NOT NULL);
+      CREATE TABLE mfa_recovery(user_id INTEGER NOT NULL REFERENCES users(id),code_hash TEXT PRIMARY KEY);
+      CREATE TABLE mfa_pending(token_hash TEXT PRIMARY KEY REFERENCES auth_sessions(token_hash) ON DELETE CASCADE,secret TEXT NOT NULL);
+      CREATE TABLE mfa_verified(token_hash TEXT PRIMARY KEY REFERENCES auth_sessions(token_hash) ON DELETE CASCADE);
+      CREATE TABLE mfa_attempts(user_id INTEGER PRIMARY KEY REFERENCES users(id),count INTEGER NOT NULL,until_at INTEGER NOT NULL);
+      CREATE TABLE password_resets(token_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),email TEXT NOT NULL,expires_at INTEGER NOT NULL);
+      CREATE INDEX password_resets_user ON password_resets(user_id);
+      CREATE TABLE athlete_guardians(athlete_id INTEGER NOT NULL REFERENCES athletes(id),user_id INTEGER NOT NULL REFERENCES users(id),verified_at TEXT NOT NULL,PRIMARY KEY(athlete_id,user_id));
+      CREATE TABLE guardian_invitations(id INTEGER PRIMARY KEY,athlete_id INTEGER NOT NULL REFERENCES athletes(id),email TEXT NOT NULL,invited_by INTEGER NOT NULL REFERENCES users(id),token_hash TEXT NOT NULL UNIQUE,expires_at INTEGER NOT NULL);
+      CREATE UNIQUE INDEX guardian_invitation_recipient ON guardian_invitations(athlete_id,email);
+      ALTER TABLE enrollments ADD COLUMN payer_id INTEGER REFERENCES users(id);
+      UPDATE enrollments SET payer_id=(SELECT id FROM users WHERE lower(email)=lower(enrollments.email) AND role='parent')
+        WHERE (SELECT COUNT(*) FROM users WHERE lower(email)=lower(enrollments.email) AND role='parent')=1;
+      DELETE FROM auth_sessions WHERE user_id IN (SELECT id FROM users WHERE role='admin');
+    `);
+    // Legacy parent_id is preserved as the primary relationship; only additionally
+    // verified guardians live in the new table. Historical payer snapshots stay intact.
+    replaceAuditTriggers(db,'athlete_guardians',['athlete_id','user_id','verified_at'],['athlete_id','user_id']);
+    replaceAuditTriggers(db,'guardian_invitations',['id','athlete_id','email','invited_by','expires_at']);
+    replaceAuditTriggers(db,'enrollments',['id','group_id','athlete_id','payer_id','month','trial_id','amount']);
+    if(db.prepare('PRAGMA foreign_key_check').all().length)throw Error('Migracja 3 narusza powiązania.');
+    db.prepare('INSERT INTO schema_migrations VALUES(3,?,?)').run('Admin MFA, password recovery and verified guardians',new Date().toISOString());
+    db.exec('COMMIT');
+  }catch(error){db.exec('ROLLBACK');throw error;}
+}

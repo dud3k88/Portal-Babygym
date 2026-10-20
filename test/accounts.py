@@ -1,3 +1,4 @@
+from mfa_helper import enroll
 """End-to-end account isolation, athlete records and editing booked groups."""
 import http.cookiejar, json, os, sqlite3, subprocess, tempfile, time, urllib.error, urllib.request
 
@@ -28,6 +29,7 @@ with tempfile.TemporaryDirectory() as directory:
   guest.request('auth/register',{'name':'Parent','email':'first@example.org','password':'test-password-123'},status=403)
   admin=Client()
   admin.request('auth/setup',{'name':'Administrator','email':'admin@example.org','password':'test-admin-password'},status=201)
+  enroll(admin.request, '2099-08-31T22:00:00Z')
   guest.request('auth/setup',{'name':'Attacker','email':'other@example.org','password':'test-password-123'},status=403)
   location=admin.request('locations',{'name':'Przedszkole'},status=201)['id']
   group_body={'location_id':location,'name':'Liski','capacity':1,'price':5000,'trial_price':3000,'trials':True,'start_date':'2099-09-01','end_date':'2099-09-30','start_time':'13:00','end_time':'13:30','weekday':2}

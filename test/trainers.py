@@ -1,3 +1,4 @@
+from mfa_helper import enroll
 """Trainer role boundaries, account activation/revocation and private notes."""
 import http.cookiejar,json,os,sqlite3,subprocess,tempfile,time,urllib.error,urllib.request
 class Client:
@@ -20,6 +21,7 @@ with tempfile.TemporaryDirectory() as folder:
  try:
   admin=Client();parent=Client();trainer=Client();other=Client();guest=Client()
   admin.call('auth/setup',{'name':'Admin','email':'admin@example.org','password':'admin-test-password'},201)
+  enroll(admin.call, '2099-09-01T10:00:00Z')
   parent_id=parent.call('auth/register',{'name':'Rodzic A','email':'parent@example.org','password':'parent-test-password','phone':'123456789'},201)['user']['id']
   other_parent=admin.call('parents',{'name':'Private Family','email':'private-family@example.org'},201)['id']
   child=parent.call('athletes',{'name':'Dziecko A'},201)['id']

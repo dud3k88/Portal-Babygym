@@ -1,3 +1,4 @@
+import { enrollMfa } from './mfa-helper.js';
 import { test,expect } from '@playwright/test';
 import { spawn } from 'node:child_process';
 import { mkdtemp,rm } from 'node:fs/promises';
@@ -23,6 +24,7 @@ test('administrator aktywuje konto trenera; własne grupy, notatka i blokada; li
  async function api(path,data){const response=await page.request.post(origin+'/api/'+path,{data});expect(response.ok(),await response.text()).toBeTruthy();return response.json();}
  await page.goto(origin);
  await page.locator('#auth-form [name=name]').fill('Administrator');await page.locator('#auth-form [name=email]').fill('admin@example.org');await page.locator('#auth-form [name=password]').fill('admin-test-password');await page.locator('#auth-submit').click();
+ await enrollMfa(page);
  await page.locator('nav [data-view=trainers]').click();await page.locator('#trainers [data-open=trainer-dialog]').first().click();
  await page.locator('#create-trainer [name=name]').fill('Anna Trener');await page.locator('#create-trainer [name=email]').fill('trainer@example.org');await page.locator('#create-trainer [type=submit]').click();
  await expect(page.locator('#trainer-list')).toContainText('Anna Trener');

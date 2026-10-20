@@ -16,8 +16,10 @@ export function createTrainerService(db,auth) {
   const memberships=all("SELECT m.* FROM memberships m JOIN group_trainers gt ON gt.group_id=m.group_id WHERE gt.trainer_id=? AND m.status IN ('active','trial')",trainer.id);
   const athletes=all("SELECT DISTINCT a.id,a.name,a.birth_date,a.parent_id FROM athletes a JOIN memberships m ON m.athlete_id=a.id JOIN group_trainers gt ON gt.group_id=m.group_id WHERE gt.trainer_id=? AND m.status IN ('active','trial') ORDER BY a.name",trainer.id);
   const athleteIds=new Set(athletes.map(athlete=>athlete.id));
-  const parents=all("SELECT DISTINCT u.id,u.name,u.email,u.phone FROM users u JOIN athletes a ON a.parent_id=u.id JOIN memberships m ON m.athlete_id=a.id JOIN group_trainers gt ON gt.group_id=m.group_id WHERE gt.trainer_id=? AND m.status IN ('active','trial')",trainer.id);
-  return {user,trainer,groups:groups.map(group=>({...group,member_count:memberships.filter(member=>member.group_id===group.id).length})),memberships,athletes,parents,
+  const links=all('SELECT id AS athlete_id,parent_id AS user_id FROM athletes UNION SELECT athlete_id,user_id FROM athlete_guardians').filter(link=>athleteIds.has(link.athlete_id));
+  const parentIds=new Set(links.map(link=>link.user_id));
+  const parents=all("SELECT id,name,email,phone FROM users WHERE role='parent'").filter(parent=>parentIds.has(parent.id));
+  return {user,trainer,groups:groups.map(group=>({...group,member_count:memberships.filter(member=>member.group_id===group.id).length})),memberships,athletes,parents,guardian_links:links,
    locations:all('SELECT DISTINCT l.id,l.name,l.address,l.city FROM locations l JOIN groups g ON g.location_id=l.id JOIN group_trainers gt ON gt.group_id=g.id WHERE gt.trainer_id=? ORDER BY l.name',trainer.id),
    sessions:sessions.filter(session=>groupIds.has(session.group_id)).map(({id,group_id,starts_at,ends_at,cancelled,excluded})=>({id,group_id,starts_at,ends_at,cancelled,excluded})),
    trainer_notes:all('SELECT athlete_id,body,updated_at FROM trainer_notes WHERE trainer_id=?',trainer.id).filter(note=>athleteIds.has(note.athlete_id)),logo,now:warsawNow()};
@@ -65,8 +67,7 @@ export function createTrainerService(db,auth) {
     if(db.prepare('SELECT id FROM users WHERE email=? AND id<>?').get(values.email,trainer.user_id))throw Error('Ten email należy do innego konta.');
     db.prepare('UPDATE users SET name=?,email=?,phone=?,access_status=? WHERE id=?').run(values.name,values.email,values.phone,status==='active'?'active':'blocked',trainer.user_id);
     if(status!=='active'||values.email!==trainer.email) {
-     db.prepare('DELETE FROM auth_sessions WHERE user_id=?').run(trainer.user_id);
-     db.prepare('DELETE FROM invitations WHERE user_id=?').run(trainer.user_id);
+     auth.invalidate(trainer.user_id);
     }
    }
    db.prepare('UPDATE trainers SET name=?,email=?,phone=?,status=? WHERE id=?').run(values.name,values.email,values.phone,status,trainer.id);
