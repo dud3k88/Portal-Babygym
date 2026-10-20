@@ -165,9 +165,13 @@ with tempfile.TemporaryDirectory() as folder:
   parent.call('enrollments',{'group_id':ruled,'athlete_id':young,'answers':{'Grupa przedszkolna':'Liski'}},400)
   assert 'Wiek dziecka' in parent.call('waiting/join',{'group_id':ruled,'athlete_id':young},400)['error']
   birthday=parent.call('athletes',{'name':'Trzecie urodziny','birth_date':'2096-09-01'},201)['id']
-  parent.call('enrollments',{'group_id':ruled,'athlete_id':birthday},400)
-  parent.call('enrollments',{'group_id':ruled,'athlete_id':birthday,'answers':{'Grupa przedszkolna':'Liski'}},201)
-  assert any(r['athlete_id']==birthday and 'Liski' in r['values_json'] for r in parent.call('state')['registration_answers'])
+  optional_charge=parent.call('enrollments',{'group_id':ruled,'athlete_id':birthday},201)['id']
+  parent.call('finance/dueDate',{'enrollment_id':optional_charge,'due_on':'2099-09-05','reason':'Test'},403)
+  admin.call('finance/dueDate',{'enrollment_id':optional_charge,'due_on':'2099-09-05','reason':'Uzgodniony termin'})
+  admin.call('finance/configure',{'auto_monthly':False,'due_day':20,'bank_account':''})
+  assert next(e for e in parent.call('state')['enrollments'] if e['id']==optional_charge)['due_on']=='2099-09-05'
+  assert not other.call('state')['finance']['deadlines']
+  assert any(r['athlete_id']==birthday and json.loads(r['values_json'])['Grupa przedszkolna']=='' for r in parent.call('state')['registration_answers'])
   assert not other.call('state')['registration_answers']
   monthly=admin.call('groups',{'name':'Miesięczna','location_id':location,'capacity':10,'price':2000,'trial_price':0,'trials':False,'dates':['2099-09-15T13:00','2099-10-08T13:00']},201)['id']
   parent.call('enrollments',{'group_id':monthly,'athlete_id':duplicate},201)
@@ -179,5 +183,9 @@ with tempfile.TemporaryDirectory() as folder:
   assert len([e for e in october if e['group_id']==monthly and e['month']=='2099-10'])==1
   assert next(e for e in october if e['group_id']==monthly and e['month']=='2099-10')['amount']==5000
   assert len(parent.call('state')['enrollments'])==len(october)
+  late=next(e for e in october if e['id']==optional_charge)
+  assert late['overdue_days']==26 and late['overdue_amount']==3500
+  new_charge=next(e for e in october if e['group_id']==monthly and e['month']=='2099-10')
+  assert new_charge['due_on']=='2099-10-10' and new_charge['payment_status']=='pending'
   print('PASS: kalendarz i obecności, wpłaty/zwroty, rozmowy i prywatność, zgody, postępy/PDF, sprzęt, wynagrodzenia/raporty, importy, zawieszenie/wznowienie, scalanie z historią i niepowtarzalne ID')
  finally:p.terminate();p.wait()

@@ -204,7 +204,7 @@ function updateTrials() {
   $('#trial-label').hidden = !group?.trials||queueSelected();
   if(queueSelected())$('#trial').value='';
   $('#group-info').innerHTML = group ? `<strong>${escape(group.name)}</strong><span>${escape(group.location)}</span><span>${escape(groupAgeLabel(group))}</span><span>${escape(scheduleLabel(group))}</span><span>Trener: ${escape(trainersFor(group.id).map(trainer=>trainer.name).join(', ') || 'Nie przypisano')}</span>` : '';
-  $('#enrollment-questions').innerHTML=JSON.parse(group?.questions||'[]').map(q=>`<label>${escape(q.label)}${q.required?' *':''}<input data-question="${escape(q.label)}" maxlength="500" ${q.required?'required':''}></label>`).join('');
+  $('#enrollment-questions').innerHTML=JSON.parse(group?.questions||'[]').map(q=>`<label>${escape(q.label)} (opcjonalnie)<input data-question="${escape(q.label)}" maxlength="500" ></label>`).join('');
   renderMonthlySessions();
   updateQuote();
 }
@@ -259,6 +259,7 @@ function renderAdmin() {
   const location = $('#billing-filter-location').value, group = $('#billing-filter-group').value;
   const month = $('#billing-filter-month').value, status = $('#billing-filter-status').value;
   const season=$('#billing-filter-season').value;
+  const minimumDays=$('#billing-filter-days').value,minimumAmount=$('#billing-filter-amount').value;
   const matches = state.enrollments.filter(entry => {
     const assignedGroup = state.groups.find(item => item.id === entry.group_id);
     return [entry.child,entry.parent,entry.email].join(' ').toLocaleLowerCase('pl').includes(search)
@@ -266,12 +267,14 @@ function renderAdmin() {
       && (!group || String(entry.group_id) === group)
       && (!month || entry.month === month)
       && matchesSeason(assignedGroup,season)
-      && (!status || (status === 'due' ? entry.balance > 0 : status === 'credit' ? entry.balance < 0 : entry.balance === 0));
+      && (minimumDays===''||(entry.payment_status==='overdue'&&entry.overdue_days>=Number(minimumDays)))
+      && (minimumAmount===''||entry.balance>=Math.round(Number(minimumAmount)*100))
+      && (!status || (status === 'due' ? entry.balance > 0 : status === 'credit' ? entry.balance < 0 : status === 'zero'?entry.balance===0:entry.payment_status===status));
   });
   const visible = directorySlice('billing', matches);
   const total = matches.reduce((sum,entry)=>sum+entry.balance,0);
-  $('#billing-count').textContent = `Należności: ${matches.length} z ${state.enrollments.length} · Łączne saldo wyników: ${money(total)}`;
-  $('#enrollments').innerHTML = visible.length ? visible.map(e => `<div class="entry"><strong>${escape(e.child)}</strong> · ${money(e.balance)}<small>${escape(e.parent)} · ${escape(e.email)}<br>${escape(e.location)} / ${escape(e.group_name)} · ${escape(e.month)}${e.trial_id ? ' · próba' : ''}</small><button class="secondary" data-adjust="${e.id}">Korekta należności</button></div>`).join('') : emptyState('wallet', 'Brak należności', 'Brak należności pasujących do wybranych filtrów.');
+  $('#billing-count').textContent = `Należności: ${matches.length} z ${state.enrollments.length} · Łączne saldo wyników: ${money(total)} · Po terminie: ${money(matches.reduce((sum,e)=>sum+e.overdue_amount,0))}`;
+  $('#enrollments').innerHTML = visible.length ? visible.map(e => `<div class="entry"><strong>${escape(e.child)}</strong> · ${money(e.balance)}<small>${escape(e.parent)} · ${escape(e.email)}<br>${escape(e.location)} / ${escape(e.group_name)} · ${escape(e.month)}${e.trial_id ? ' · próba' : ''}</small><small>${escape(paymentDeadlineLabel(e))}</small><button class="secondary" data-deadline="${e.id}">Termin płatności</button><button class="secondary" data-adjust="${e.id}">Korekta należności</button></div>`).join('') : emptyState('wallet', 'Brak należności', 'Brak należności pasujących do wybranych filtrów.');
   const matchingIds = new Set(matches.map(entry=>entry.id));
   const adjustments = state.adjustments.filter(entry=>matchingIds.has(entry.enrollment_id));
   $('#history').innerHTML = directorySlice('history',adjustments).map(a => `<div class="entry"><strong>${money(a.amount)}</strong> · zapis #${a.enrollment_id}<br>${escape(a.reason)}<small>${escape(a.created_at.replace('T', ' '))} · administrator testowy</small></div>`).join('') || '<p class="hint">Brak korekt dla wybranych należności.</p>';
@@ -572,7 +575,7 @@ $('#create-group').onsubmit = async event => {
   button.disabled = true;
   const body = Object.fromEntries(new FormData(form));
   try {
-    const result = await api(body.id ? 'groups/update' : 'groups', { ...body, min_age:body.min_age===''?null:Number(body.min_age),max_age:body.max_age===''?null:Number(body.max_age),questions:body.questions_text.split('\n').map(s=>s.trim()).filter(Boolean).map(s=>({label:s.startsWith('*')?s.slice(1).trim():s,required:s.startsWith('*')})), id: body.id ? Number(body.id) : undefined, location_id: Number($('#group-location').value), season_id: $('#group-season').value?Number($('#group-season').value):null, registration_open: form.elements.registration_open.checked, price: Math.round(Number(body.price) * 100), trial_price: Math.round(Number(body.trial_price) * 100), capacity: Number(body.capacity), trials: body.trials === 'on', weekday: Number(body.weekday), trainer_ids: selectedIds('#new-group-trainers') });
+    const result = await api(body.id ? 'groups/update' : 'groups', { ...body, min_age:body.min_age===''?null:Number(body.min_age),max_age:body.max_age===''?null:Number(body.max_age),questions:body.questions_text.split('\n').map(s=>s.trim()).filter(Boolean).map(s=>({label:s.startsWith('*')?s.slice(1).trim():s,required:false})), id: body.id ? Number(body.id) : undefined, location_id: Number($('#group-location').value), season_id: $('#group-season').value?Number($('#group-season').value):null, registration_open: form.elements.registration_open.checked, price: Math.round(Number(body.price) * 100), trial_price: Math.round(Number(body.trial_price) * 100), capacity: Number(body.capacity), trials: body.trials === 'on', weekday: Number(body.weekday), trainer_ids: selectedIds('#new-group-trainers') });
     form.reset();
     $('#group-dialog').close();
     await refresh();
@@ -696,7 +699,7 @@ function openGroup(id = null) {
   $('#group-edit-note').hidden = !group;
   form.querySelector('[type="submit"]').textContent = group ? 'Zapisz zmiany' : 'Utwórz grupę';
   if (group) {
-    form.elements.questions_text.value=JSON.parse(group.questions||'[]').map(q=>(q.required?'*':'')+q.label).join('\n');
+    form.elements.questions_text.value=JSON.parse(group.questions||'[]').map(q=>q.label).join('\n');
     for (const key of ['activity_type','parent_description','min_age','max_age','name','location_id','capacity','price','trial_price','start_date','end_date','start_time','end_time','weekday','season_id','status']) {
       if (group[key] !== null) form.elements[key].value = ['price','trial_price'].includes(key) ? group[key] / 100 : group[key];
     }
@@ -793,8 +796,7 @@ function openAthleteDetail(id) {
   const balance = charges.reduce((total,charge)=>total+charge.balance,0)-(state.finance?.payments||[]).filter(p=>p.athlete_id===id).reduce((sum,p)=>sum+p.credit,0);
   const outstanding = Math.max(0,balance);
   const credit = Math.max(0,-balance);
-  const olderCharges = charges.filter(charge=>charge.month<state.now.slice(0,7)).reduce((total,charge)=>total+charge.balance,0);
-  const previousDue = Math.max(0,Math.min(outstanding,olderCharges));
+  const previousDue = charges.reduce((total,charge)=>total+charge.overdue_amount,0);
   const tabs = [['data','Dane'],['groups','Grupy'],['parent','Opiekunowie'],['finances','Rozliczenia']];
   $('#athlete-detail-title').textContent = athlete.name;
   $('#athlete-detail').innerHTML = `
@@ -823,11 +825,11 @@ function openAthleteDetail(id) {
       <div class="trainer-actions"><button class="secondary" data-invite-guardian="${id}">Zaproś kolejnego opiekuna</button></div>
     </section>
     <section role="tabpanel" id="athlete-panel-finances" aria-labelledby="athlete-tab-finances" tabindex="0" hidden>
-      <div class="athlete-finance-summary"><div><span>Do zapłaty</span><strong>${money(outstanding)}</strong></div><div><span>Nadpłata</span><strong>${money(credit)}</strong></div><div><span>Z poprzednich miesięcy</span><strong>${money(previousDue)}</strong></div></div>
-      ${state.finance?.settings.bank_account?`<div class="entry"><strong>Przelew tradycyjny</strong><p>Rachunek: ${escape(state.finance.settings.bank_account)}</p><p>Tytuł: EA / zawodnik ${id} / ${escape(state.now.slice(0,7))}</p><small>Termin płatności: ${state.finance.settings.due_day}. dzień miesiąca.</small></div>`:''}<p class="hint">Saldo naliczeń: ${money(balance)}. Kwota dodatnia oznacza należność, ujemna — nadpłatę. Płatności online nie są jeszcze podłączone.</p>
+      <div class="athlete-finance-summary"><div><span>Do zapłaty</span><strong>${money(outstanding)}</strong></div><div><span>Nadpłata</span><strong>${money(credit)}</strong></div><div><span>Po terminie</span><strong>${money(previousDue)}</strong></div></div>
+      ${state.finance?.settings.bank_account?`<div class="entry"><strong>Przelew tradycyjny</strong><p>Rachunek: ${escape(state.finance.settings.bank_account)}</p><p>Tytuł: EA / zawodnik ${id} / ${escape(state.now.slice(0,7))}</p><small>Termin płatności znajdziesz przy każdej należności poniżej.</small></div>`:''}<p class="hint">Saldo naliczeń: ${money(balance)}. Kwota dodatnia oznacza należność, ujemna — nadpłatę. Płatności online nie są jeszcze podłączone.</p>
       <h3 class="profile-ledger-title">Wpłaty i zwroty</h3>${(state.finance?.payments||[]).filter(p=>p.athlete_id===id).map(p=>`<div class="entry"><strong>${money(p.amount)} · ${escape(p.paid_on)}</strong><small>${escape(p.reference)} · wolne środki ${money(p.credit)}</small>${(state.finance.refunds||[]).filter(r=>r.payment_id===p.id).map(r=>`<small>Zwrot ${money(r.amount)} · ${r.status==='paid'?'wykonany':'zatwierdzony do wykonania'}</small>`).join('')}</div>`).join('')||'<p class="hint">Brak wpłat.</p>'}
       <h3 class="profile-ledger-title">Historia rozliczeń</h3>
-      ${charges.map(charge=>`<div class="entry"><div class="profile-charge-heading"><strong>${escape(charge.month)} · ${escape(charge.group_name)}</strong><strong>${money(charge.balance)}</strong></div><small>${escape(charge.location)} · naliczono ${money(charge.amount)}</small>${state.adjustments.filter(adjustment=>adjustment.enrollment_id===charge.id).map(adjustment=>`<small>${escape(adjustment.created_at.slice(0,10))} · ${money(adjustment.amount)} · ${escape(adjustment.reason)}</small>`).join('')}</div>`).join('')||'<p class="hint">Brak naliczeń.</p>'}
+      ${charges.map(charge=>`<div class="entry"><div class="profile-charge-heading"><strong>${escape(charge.month)} · ${escape(charge.group_name)}</strong><strong>${money(charge.balance)}</strong></div><small>${escape(charge.location)} · naliczono ${money(charge.amount)}</small><small>${escape(paymentDeadlineLabel(charge))}</small>${(state.finance?.deadlines||[]).filter(d=>d.enrollment_id===charge.id).map(d=>`<small>Zmiana terminu na ${escape(d.new_due_on)}: ${escape(d.reason)}</small>`).join('')}${state.adjustments.filter(adjustment=>adjustment.enrollment_id===charge.id).map(adjustment=>`<small>${escape(adjustment.created_at.slice(0,10))} · ${money(adjustment.amount)} · ${escape(adjustment.reason)}</small>`).join('')}</div>`).join('')||'<p class="hint">Brak naliczeń.</p>'}
     </section>`;
   openDialog('athlete-detail-dialog');
 }
@@ -855,7 +857,7 @@ function renderMyChildren() {
   $('#my-children').innerHTML = state.athletes.map(athlete => {
     const memberships = state.memberships.filter(member => member.athlete_id === athlete.id);
     const balance = state.enrollments.filter(enrollment => enrollment.athlete_id === athlete.id).reduce((sum,enrollment)=>sum+enrollment.balance,0)-(state.finance?.payments||[]).filter(p=>p.athlete_id===athlete.id).reduce((sum,p)=>sum+p.credit,0);
-    return `<article class="section-card child-card"><h2>${escape(athlete.name)}</h2><p class="hint">Należności: ${money(balance)} · płatności online w późniejszym etapie</p>${waitingMarkup(athlete.id)}${memberships.map(member=>{
+    return `<article class="section-card child-card"><h2>${escape(athlete.name)}</h2><p class="hint">Należności: ${money(balance)} · Po terminie: ${money(state.enrollments.filter(e=>e.athlete_id===athlete.id).reduce((sum,e)=>sum+e.overdue_amount,0))}</p>${waitingMarkup(athlete.id)}${memberships.map(member=>{
       const group=state.groups.find(entry=>entry.id===member.group_id);
       const terms=state.sessions.filter(session=>session.group_id===group.id&&session.starts_at>=state.now&&(!member.ends_at||session.starts_at<member.ends_at)&&member.status!=='ended'&&(!session.cancelled||member.trial_id===session.id)&&(!member.trial_id||session.id===member.trial_id)).slice(0,6);
       return `<div class="child-group"><h3>${escape(group.location)} / ${escape(group.name)}</h3><p class="hint">${member.status==='suspended'?'Udział zawieszony':member.status==='ended'?'Udział zakończony':member.status==='trial'?'Zajęcia próbne':'Zapis stały'}${group.start_time?' · '+escape(group.start_time)+'–'+escape(group.end_time):''}</p><p class="hint">Najbliższe terminy:</p>${terms.map(session=>termMarkup(session)).join('')||'<p class="hint">Brak przyszłych terminów.</p>'}${participationMarkup(member,false)}</div>`;
@@ -1325,3 +1327,6 @@ $('#find-duplicates').onclick=async()=>{try{const data=await api('athletes/dupli
 document.addEventListener('click',event=>{const button=event.target.closest('[data-merge-source]');if(!button)return;operationDialog('Połącz kartoteki',[{name:'reason',label:'Powód połączenia'},{name:'confirmed',label:'Potwierdzenie',options:[['false','Wybierz decyzję'],['true','Potwierdzam: to ta sama osoba']]}],async b=>{await api('athletes/merge',{...b,confirmed:b.confirmed==='true',source_id:Number(button.dataset.mergeSource),target_id:Number(button.dataset.mergeTarget)});$('#athlete-duplicates').innerHTML='';},`Historia kartoteki #${button.dataset.mergeSource} zostanie przeniesiona do #${button.dataset.mergeTarget}. Konflikt zapisów lub dostępów przerwie całą operację. Sprawdź oba profile przed zatwierdzeniem.`);});
 function reportSources(r){return '<details><summary>Źródła naliczeń i kosztów</summary><h3>Należności</h3>'+r.charges.map(c=>`<div class="entry">#${c.id} · ${escape(c.child)} · ${money(c.due)}</div>`).join('')+'<h3>Koszty</h3>'+r.costs.map(c=>`<div class="entry">${escape(c.label)} · ${money(c.amount)}</div>`).join('')+'<h3>Najem</h3>'+r.rent_items.map(c=>`<div class="entry">${escape(c.start||c.label)} · ${money(c.amount)}</div>`).join('')+'</details>';}
 document.addEventListener('click',async event=>{const button=event.target.closest('[data-report-snapshot]');if(!button)return;try{const saved=await api('business/snapshot?id='+button.dataset.reportSnapshot),r=saved.data;$('#report-snapshot-content').innerHTML=`<h3>${escape(saved.month)} · wersja ${saved.revision}</h3><p>${escape(saved.reason)}</p><p>Przychody: ${money(r.revenue)} · wpłaty: ${money(r.received)} · wynik operacyjny: ${money(r.result)}</p>`+reportSources(r);openDialog('report-dialog');}catch(e){notice(e.message,true);}});
+
+function paymentDeadlineLabel(e){const date=e.due_on?e.due_on.split('-').reverse().join('.'):'nieustalony';const label={overdue:`Po terminie: ${e.overdue_days} dni`,pending:'W terminie',unknown:'Termin nieustalony',settled:'Rozliczona',credit:'Nadpłata'}[e.payment_status]||'';return `Termin płatności: ${date} · ${label}`;}
+document.addEventListener('click',event=>{const button=event.target.closest('[data-deadline]');if(!button)return;const entry=state.enrollments.find(e=>e.id===Number(button.dataset.deadline));operationDialog('Termin płatności',[{name:'due_on',label:'Termin',type:'date',value:entry.due_on||state.now.slice(0,10)},{name:'reason',label:'Powód ustalenia lub zmiany terminu'}],b=>api('finance/dueDate',{...b,enrollment_id:entry.id}),'Zmiana dotyczy tylko tej należności i zostanie zapisana w historii.');});

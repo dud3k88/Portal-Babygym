@@ -1,3 +1,4 @@
+import {paymentTiming} from './payment-deadlines.js';
 import {transaction as registrationTransaction} from './operations.js';
 import {groupRules,checkAge,saveRegistrationAnswers} from './registration-rules.js';
 import {createDirectoryOperations,nextAthleteId} from './directory-operations.js';
@@ -12,7 +13,7 @@ import { createCalendar } from './operations.js';
 import { createAdmissions } from './admissions.js';
 import { createUserService } from './users.js';
 import http from 'node:http';
-import { migrateFoundations, migrateTrainerAccess, migrateAccountSecurity, migrateSeasons, migrateParticipation, migrateAdmissions, migrateOperations, migrateFinance, migrateWorkspace, migrateMethodology, migrateBusiness, migrateDirectoryOperations, migrateRegistrationRules } from './migrations.js';
+import { migrateFoundations, migrateTrainerAccess, migrateAccountSecurity, migrateSeasons, migrateParticipation, migrateAdmissions, migrateOperations, migrateFinance, migrateWorkspace, migrateMethodology, migrateBusiness, migrateDirectoryOperations, migrateRegistrationRules, migratePaymentDeadlines } from './migrations.js';
 import { createSeasonService } from './seasons.js';
 import { createParticipation, isCurrentMember, membershipDTO, nextMonthStart } from './participation.js';
 import { createGuardians } from './guardians.js';
@@ -110,6 +111,7 @@ migrateMethodology(db);
 migrateBusiness(db);
 migrateDirectoryOperations(db);
 migrateRegistrationRules(db);
+migratePaymentDeadlines(db);
 const participation=createParticipation(db);
 const seasonService=createSeasonService(db);
 auth.validateSecurity();
@@ -201,7 +203,7 @@ function stateFor(user) {
  const admin=user.role==='admin';
  const athletes=admin?all('SELECT * FROM athletes ORDER BY name'):all('SELECT id,parent_id,name,birth_date,created_at FROM athletes WHERE parent_id=? OR id IN (SELECT athlete_id FROM athlete_guardians WHERE user_id=?) ORDER BY name',user.id,user.id);
  const ids=new Set(athletes.map(a=>a.id));
- const enrollments=all(`SELECT e.*, a.name AS child, g.name AS group_name, g.location, e.amount + COALESCE((SELECT SUM(a.amount) FROM adjustments a WHERE a.enrollment_id=e.id),0)-COALESCE((SELECT SUM(pa.amount) FROM payment_allocations pa WHERE pa.enrollment_id=e.id),0) AS balance FROM enrollments e JOIN groups g ON g.id=e.group_id JOIN athletes a ON a.id=e.athlete_id ORDER BY e.id DESC`).filter(e=>admin||ids.has(e.athlete_id));
+ const enrollments=all(`SELECT e.*, a.name AS child, g.name AS group_name, g.location, e.amount + COALESCE((SELECT SUM(a.amount) FROM adjustments a WHERE a.enrollment_id=e.id),0)-COALESCE((SELECT SUM(pa.amount) FROM payment_allocations pa WHERE pa.enrollment_id=e.id),0) AS balance FROM enrollments e JOIN groups g ON g.id=e.group_id JOIN athletes a ON a.id=e.athlete_id ORDER BY e.id DESC`).filter(e=>admin||ids.has(e.athlete_id)).map(e=>paymentTiming(e));
  const enrollmentIds=new Set(enrollments.map(e=>e.id));
  const waiting=all('SELECT * FROM waiting_list ORDER BY id').filter(entry=>admin||ids.has(entry.athlete_id));
  const ownGroupIds=new Set(all('SELECT * FROM memberships').filter(m=>ids.has(m.athlete_id)).map(m=>m.group_id));
@@ -320,7 +322,7 @@ const server = http.createServer(withRequestContext(async (req,res) => {
   if(req.method==='GET'&&url.pathname==='/api/athletes/duplicates')return send(200,directoryOperations.duplicates(user));
   if(req.method==='GET'&&url.pathname==='/api/export'){
    const kind=url.searchParams.get('kind'),format=url.searchParams.get('format')||'csv',rows=exchange.rows(kind,url.searchParams,user);
-   if(!['csv','xlsx'].includes(format))throw Error('Wybierz CSV lub XLSX.');const names={id:'ID',name:'Imię i nazwisko',birth_date:'Data urodzenia',parent:'Rodzic',email:'Email',phone:'Telefon',child:'Zawodnik',amount:'Kwota (grosze)',reference:'Identyfikator wpłaty',paid_on:'Data wpływu',month:'Miesiąc',group_name:'Grupa',location:'Lokalizacja',balance:'Do zapłaty (grosze)',trainer:'Trener',minutes:'Minuty',metric:'Wskaźnik',value:'Wartość'};
+   if(!['csv','xlsx'].includes(format))throw Error('Wybierz CSV lub XLSX.');const names={id:'ID',name:'Imię i nazwisko',birth_date:'Data urodzenia',parent:'Rodzic',email:'Email',phone:'Telefon',child:'Zawodnik',amount:'Kwota (grosze)',reference:'Identyfikator wpłaty',paid_on:'Data wpływu',month:'Miesiąc',group_name:'Grupa',location:'Lokalizacja',balance:'Do zapłaty (grosze)',due_on:'Termin płatności',payment_status:'Status płatności',overdue_days:'Dni opóźnienia',overdue_amount:'Zaległość (grosze)',trainer:'Trener',minutes:'Minuty',metric:'Wskaźnik',value:'Wartość'};
    const keys=[...new Set(rows.flatMap(row=>Object.keys(row)))],columns=(keys.length?keys:['id']).map(key=>({key,label:names[key]||key}));const output=format==='csv'?csv(columns,rows):await workbook(kind,columns,rows);
    res.writeHead(200,{'Content-Type':format==='csv'?'text/csv; charset=utf-8':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':'attachment; filename="evolution-'+kind+'.'+format+'"'});return res.end(output);
   }
@@ -392,7 +394,7 @@ const server = http.createServer(withRequestContext(async (req,res) => {
     if(url.pathname==='/api/users/invite')return send(200,userService.invite(b));
    }
    if(['/api/memberships/withdraw','/api/memberships/cancel-withdrawal'].includes(url.pathname))return send(200,participation.change(b,athleteById(b.athlete_id,user),url.pathname.endsWith('/cancel-withdrawal')));
-   if(url.pathname.startsWith('/api/finance/')){const action=url.pathname.split('/').at(-1);if(!['payment','allocate','refund','refundPaid','price','discount','generate','configure','feeRule','fee'].includes(action))throw Error('Nieznana operacja finansowa.');return send(200,financeService[action](b,user));}
+   if(url.pathname.startsWith('/api/finance/')){const action=url.pathname.split('/').at(-1);if(!['payment','allocate','refund','refundPaid','price','discount','generate','configure','feeRule','fee','dueDate'].includes(action))throw Error('Nieznana operacja finansowa.');return send(200,financeService[action](b,user));}
    if(url.pathname==='/api/admissions/settings')return send(200,admissions.saveSettings(b));
    if(['/api/waiting/join','/api/waiting/cancel','/api/waiting/accept','/api/trials/quote','/api/trials/convert'].includes(url.pathname)) {
     const current=auth.user(req);

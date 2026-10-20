@@ -1,3 +1,4 @@
+import {paymentTiming} from './payment-deadlines.js';
 import {integer,required,transaction} from './operations.js';
 import {validDate} from './schedule.js';
 import {warsawNow} from './billing.js';
@@ -7,7 +8,7 @@ export function createExchange(db,finance,business){
   if(user.role!=='admin')throw Object.assign(Error('Wymagane konto administratora.'),{status:403});
   if(kind==='athletes')return all('SELECT a.id,a.name,a.birth_date,u.name AS parent,u.email,u.phone FROM athletes a JOIN users u ON u.id=a.parent_id ORDER BY a.name');
   if(kind==='payments')return all('SELECT p.id,a.name AS child,p.amount,p.reference,p.paid_on FROM payments p JOIN athletes a ON a.id=p.athlete_id ORDER BY p.paid_on');
-  if(kind==='charges')return all('SELECT e.id,a.name AS child,e.month,g.name AS group_name,g.location,e.amount+COALESCE((SELECT SUM(amount) FROM adjustments WHERE enrollment_id=e.id),0) AS amount,e.amount+COALESCE((SELECT SUM(amount) FROM adjustments WHERE enrollment_id=e.id),0)-COALESCE((SELECT SUM(amount) FROM payment_allocations WHERE enrollment_id=e.id),0) AS balance FROM enrollments e JOIN athletes a ON a.id=e.athlete_id JOIN groups g ON g.id=e.group_id ORDER BY e.month,e.id');
+  if(kind==='charges')return all('SELECT e.id,e.due_on,a.name AS child,e.month,g.name AS group_name,g.location,e.amount+COALESCE((SELECT SUM(amount) FROM adjustments WHERE enrollment_id=e.id),0) AS amount,e.amount+COALESCE((SELECT SUM(amount) FROM adjustments WHERE enrollment_id=e.id),0)-COALESCE((SELECT SUM(amount) FROM payment_allocations WHERE enrollment_id=e.id),0) AS balance FROM enrollments e JOIN athletes a ON a.id=e.athlete_id JOIN groups g ON g.id=e.group_id ORDER BY e.month,e.id').map(e=>paymentTiming(e));
   if(kind==='report'){const r=business.report({month:query.get('month')},user);return Object.entries(r).filter(([key,value])=>typeof value==='number'&&key!=='location_id').map(([key,value])=>({metric:key,value}));}
   if(kind==='wages'){const month=query.get('month');return all('SELECT id,name FROM trainers').flatMap(t=>business.wages(t.id,month,user).items.map(i=>({trainer:t.name,month,...i})));}
   throw Error('Nieznany eksport.');

@@ -8,7 +8,7 @@ są ewidencją operacji wykonanej poza aplikacją. Nie wykonują przelewów.
 
 W ustawieniach grupy dostępne są rodzaj zajęć, opis dla rodzica, minimalny i maksymalny
 wiek oraz maksymalnie 10 własnych pytań tekstowych. Jedno pytanie w wierszu;
-gwiazdka na początku oznacza obowiązek odpowiedzi. Odpowiedź ma limit 500 znaków.
+wszystkie pytania są opcjonalne dla rodzica. Odpowiedź ma limit 500 znaków.
 Rodzic widzi pola zarówno w publicznym formularzu, jak i przy zapisie z panelu.
 Odpowiedzi są w kartotece dziecka, dostępne administratorowi i jego opiekunom;
 trener nie otrzymuje tych danych automatycznie. Zmiany odpowiedzi mają audyt.
@@ -19,7 +19,7 @@ lata w dniu zapisu, obie granice są włączne. Dla urodzonych 29 lutego ukończ
 kolejnego roku w roku nieprzestępnym następuje tu 1 marca. Jeśli określono choć jedną
 granicę, data urodzenia jest wymagana. Stare grupy mają brak ograniczeń, więc
 migracja nie usuwa ani nie zmienia istniejących zapisów. Zmiana zakresu wieku
-nie wypisuje obecnych uczestników. Wymagane pytania są sprawdzane również przez API;
+nie wypisuje obecnych uczestników. API również pozwala pominąć dodatkowe pytania;
 wcześniejsze odpowiedzi z kolejki zachowują swoją wersję przy przyjęciu oferty.
 
 Walidacja: 32 testy Node, testy integracyjne zapisów/operacji/migracji i 6 scenariuszy
@@ -116,7 +116,7 @@ To działająca zbiorcza rozbudowa, **nie pełny odbiór wszystkich punktów spe
 | 3 Kartoteki | Import/eksport, kontrolowane połączenie i zgody działają; pozostały łączenie konfliktujących historii i kont rodziców, konfiguracja osadzania WordPress. |
 | 4 Kalendarz | Dziennik i realizacja działają; pozostały statystyki frekwencji, pełny zestaw filtrów UI, przesunięcia między miesiącami i zmiana cyklu od dowolnej przyszłej daty. |
 | 5 Rodzic | Dostęp do własnych danych, rozmów, zgód i postępów działa; automatyczne przypomnienia i pulpit zbiorczy wymagają rozwinięcia. |
-| 6 Rozliczenia | Księga, import, cenniki i naliczanie działają; pozostały historyczny VAT, terminy płatności per pozycja, automatyczne wpisowe/przypomnienia, propozycje dopasowań bankowych. Operator online wyłączony zgodnie z poleceniem. |
+| 6 Rozliczenia | Księga, import, cenniki i naliczanie działają; pozostały historyczny VAT, automatyczne wpisowe/przypomnienia, propozycje dopasowań bankowych. Operator online wyłączony zgodnie z poleceniem. |
 | 7 Trenerzy | Godziny, stawki, zestawienia i korekty działają; pozostały konfigurowalne automatyczne premie oraz pełne powiązanie cyklicznej dyspozycyjności z konfliktami grafiku. Nie przyjęto niezatwierdzonego wzoru premii. |
 | 8 Komunikacja | Wątki i powiadomienia w aplikacji działają; pozostały masowe kampanie, szablony, harmonogram i wszystkie automatyzacje. SMS/email nie są podłączone. |
 | 9 Raporty | Podstawowy raport firmy/placówki i zapis wersji działa; pozostały rentowność grupy, prognozy/scenariusze, kreator i pełne porównania sezonów oraz VAT. |
@@ -152,3 +152,26 @@ zależność UUID 11.1.1; audyt produkcyjnych zależności: 0 zgłoszonych podat
 
 Testy korzystają z baz tymczasowych i fikcyjnych danych. Nie wykonują prawdziwych
 przelewów ani wysyłek.
+
+## Terminy płatności i opcjonalne pytania (migracja 14)
+
+Nowe należności otrzymują własny termin płatności: ustawiony dzień miesiąca,
+jednak nie wcześniej niż dzień naliczenia. Zmiana ustawień nie przesuwa wcześniej
+zapisanych terminów. Administrator może ustalić lub zmienić termin pojedynczej
+należności z podaniem powodu; historia pozostaje dostępna w kartotece.
+
+Stare należności bez terminu mają status „Termin nieustalony”. Nie zgadujemy
+historycznych dat i nie zaliczamy takich pozycji do zaległości przeterminowanych.
+Dodatnie saldo staje się zaległością dopiero następnego dnia po terminie, według
+czasu polskiego. Dni opóźnienia są dniami kalendarzowymi. Wpłata rozlicza konkretną
+należność po przypisaniu; nieprzypisany kredyt nie zmniejsza jej zaległości.
+Rozliczenia można filtrować po statusie, minimalnej kwocie i dniach opóźnienia.
+Rodzic widzi terminy i zaległości własnych dzieci. Eksport należności zawiera te dane.
+
+Migracja zmienia dotychczasowe pytania dodatkowe na opcjonalne, zachowując
+historyczne odpowiedzi. Nie uruchamia wysyłki przypomnień ani płatności online.
+
+Walidacja tego etapu: 36 testów Node (35 w pełnym przebiegu oraz dodany test
+migracji), integracje operations/foundations/public_signup/admissions i 6 scenariuszy
+Playwright na Chromium. Sprawdzono zapis bez odpowiedzi, zmianę terminu i filtrowanie
+w przeglądarce, uprawnienia, historyczne dane, rollback i ponowne uruchomienie migracji.

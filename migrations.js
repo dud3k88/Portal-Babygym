@@ -333,3 +333,20 @@ export function migrateRegistrationRules(db){
  db.prepare('INSERT INTO schema_migrations VALUES(13,?,?)').run('Group age rules and registration questions',new Date().toISOString());db.exec('COMMIT');
  }catch(e){db.exec('ROLLBACK');throw e;}
 }
+
+export function migratePaymentDeadlines(db){
+ if(db.prepare('SELECT version FROM schema_migrations WHERE version=14').get())return;
+ db.exec('BEGIN IMMEDIATE');try{
+ db.exec(`ALTER TABLE enrollments ADD COLUMN due_on TEXT;
+ CREATE TABLE enrollment_deadlines(id INTEGER PRIMARY KEY,enrollment_id INTEGER NOT NULL REFERENCES enrollments(id),old_due_on TEXT,new_due_on TEXT NOT NULL,reason TEXT NOT NULL,actor_id INTEGER REFERENCES users(id),created_at TEXT NOT NULL);
+ CREATE INDEX enrollment_due_on ON enrollments(due_on);
+ CREATE TRIGGER enrollment_default_deadline AFTER INSERT ON enrollments WHEN NEW.due_on IS NULL BEGIN
+ UPDATE enrollments SET due_on=MAX(substr(academy_now(),1,10),substr(NEW.created_at,1,10),NEW.month||'-'||printf('%02d',(SELECT due_day FROM finance_settings WHERE id=1))) WHERE id=NEW.id;
+ END;`);
+ replaceAuditTriggers(db,'enrollments',db.prepare('PRAGMA table_info(enrollments)').all().map(c=>c.name));
+ replaceAuditTriggers(db,'enrollment_deadlines',['id','enrollment_id','old_due_on','new_due_on','reason','actor_id','created_at']);
+ // Existing question definitions become optional; preserve historical answer snapshots.
+ for(const g of db.prepare('SELECT id,questions FROM groups').all())db.prepare('UPDATE groups SET questions=? WHERE id=?').run(JSON.stringify(JSON.parse(g.questions).map(q=>({...q,required:false}))),g.id);
+ db.prepare('INSERT INTO schema_migrations VALUES(14,?,?)').run('Payment deadlines and optional registration questions',new Date().toISOString());db.exec('COMMIT');
+ }catch(e){db.exec('ROLLBACK');throw e;}
+}
