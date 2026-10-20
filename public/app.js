@@ -150,7 +150,7 @@ async function loadAudit(append=false) {
 
 function enrollmentBody() {
   const body = Object.fromEntries(new FormData($('#enroll')));
-  return { ...body, waitlist:queueSelected(), athlete_id: Number(body.athlete_id), group_id: Number(body.group_id), trial_id: body.trial_id ? Number(body.trial_id) : null };
+  return { ...body, answers:Object.fromEntries([...document.querySelectorAll('#enrollment-questions input')].map(input=>[input.dataset.question,input.value])), waitlist:queueSelected(), athlete_id: Number(body.athlete_id), group_id: Number(body.group_id), trial_id: body.trial_id ? Number(body.trial_id) : null };
 }
 
 async function refresh() {
@@ -186,6 +186,7 @@ async function refresh() {
   if (state.logo) $('#brand-logo').src = state.logo;
 }
 
+function groupAgeLabel(g){return g.min_age==null&&g.max_age==null?'':g.min_age!=null&&g.max_age!=null?`Wiek: ${g.min_age}–${g.max_age} lat`:g.min_age!=null?`Wiek: od ${g.min_age} lat`:`Wiek: do ${g.max_age} lat`;}
 function updateGroups() {
   const group = state.groups.find(entry => entry.id === Number($('#group').value));
   if (!group || group.location_id !== Number($('#location').value)) $('#group').value = '';
@@ -202,7 +203,8 @@ function updateTrials() {
   if (!$('#trial').value) $('#trial').value = '';
   $('#trial-label').hidden = !group?.trials||queueSelected();
   if(queueSelected())$('#trial').value='';
-  $('#group-info').innerHTML = group ? `<strong>${escape(group.name)}</strong><span>${escape(group.location)}</span><span>${escape(scheduleLabel(group))}</span><span>Trener: ${escape(trainersFor(group.id).map(trainer=>trainer.name).join(', ') || 'Nie przypisano')}</span>` : '';
+  $('#group-info').innerHTML = group ? `<strong>${escape(group.name)}</strong><span>${escape(group.location)}</span><span>${escape(groupAgeLabel(group))}</span><span>${escape(scheduleLabel(group))}</span><span>Trener: ${escape(trainersFor(group.id).map(trainer=>trainer.name).join(', ') || 'Nie przypisano')}</span>` : '';
+  $('#enrollment-questions').innerHTML=JSON.parse(group?.questions||'[]').map(q=>`<label>${escape(q.label)}${q.required?' *':''}<input data-question="${escape(q.label)}" maxlength="500" ${q.required?'required':''}></label>`).join('');
   renderMonthlySessions();
   updateQuote();
 }
@@ -326,7 +328,7 @@ function renderCalendar() {
   const sessions=state.sessions.filter(session=>session.group_id===group.id&&session.starts_at.startsWith(month)&&!session.cancelled);
   const active=sessions.filter(session=>!session.excluded);
   const members=state.memberships.filter(member=>member.group_id===group.id);
-  $('#calendar').innerHTML=`<div class="admin-group-detail"><div class="group-detail-heading"><div><h2>${escape(group.name)}</h2><p>${escape(groupStatusLabel(group))} · ${escape(seasonName(group.season_id))}</p><p>${escape(scheduleLabel(group))}</p><p>Trener: ${escape(trainersFor(group.id).map(person=>person.name).join(', ')||'Nie przypisano')}</p></div><div class="trainer-actions"><button class="secondary" data-edit-group="${group.id}">Edytuj ustawienia</button><button class="secondary" data-lifecycle="${group.id}">Status i zapisy</button><button class="secondary" data-copy-group="${group.id}">Skopiuj grupę</button></div></div><div class="detail-facts"><span><strong>${group.member_count} / ${group.capacity}</strong> zapisanych</span><span><strong>${group.reserved_count||0}</strong> ofert z rezerwacją miejsca</span><span><strong>${money(group.price)}</strong> / zajęcia</span><span><strong>${active.length}</strong> zajęć w miesiącu</span><span><strong>${money(active.reduce((sum,session)=>sum+session.price,0))}</strong> za pełny miesiąc</span></div><h3>Zawodnicy</h3><div class="detail-roster">${members.map(member=>rosterRow(state.athletes.find(athlete=>athlete.id===member.athlete_id))+`<p class="hint">${member.status==='suspended'?'Udział zawieszony':member.status==='ended'?'Udział zakończony':member.status==='trial'?'Zapis próbny':member.ends_at?'Rezygnacja: miejsce zwalnia się '+escape(member.ends_at.slice(0,10)):'Aktywny udział'}</p>`).join('')||'<p class="hint">Brak zapisanych zawodników.</p>'}</div><h3>Lista rezerwowa</h3>${waitingMarkup(null,group.id)}<h3>Terminy zajęć</h3><div>${sessions.map(session=>termMarkup(session)).join('')||'<p class="hint">Brak terminów w tym miesiącu.</p>'}</div></div>`;
+  $('#calendar').innerHTML=`<div class="admin-group-detail"><div class="group-detail-heading"><div><h2>${escape(group.name)}</h2><p>${escape(groupStatusLabel(group))} · ${escape(seasonName(group.season_id))}</p><p>${escape(scheduleLabel(group))}</p>${group.parent_description?`<p>${escape(group.parent_description)}</p>`:''}${group.activity_type?`<p>${escape(group.activity_type)}</p>`:''}<p>Trener: ${escape(trainersFor(group.id).map(person=>person.name).join(', ')||'Nie przypisano')}</p></div><div class="trainer-actions"><button class="secondary" data-edit-group="${group.id}">Edytuj ustawienia</button><button class="secondary" data-lifecycle="${group.id}">Status i zapisy</button><button class="secondary" data-copy-group="${group.id}">Skopiuj grupę</button></div></div><div class="detail-facts"><span><strong>${group.member_count} / ${group.capacity}</strong> zapisanych</span><span><strong>${group.reserved_count||0}</strong> ofert z rezerwacją miejsca</span><span><strong>${money(group.price)}</strong> / zajęcia</span><span><strong>${active.length}</strong> zajęć w miesiącu</span><span><strong>${money(active.reduce((sum,session)=>sum+session.price,0))}</strong> za pełny miesiąc</span></div><h3>Zawodnicy</h3><div class="detail-roster">${members.map(member=>rosterRow(state.athletes.find(athlete=>athlete.id===member.athlete_id))+`<p class="hint">${member.status==='suspended'?'Udział zawieszony':member.status==='ended'?'Udział zakończony':member.status==='trial'?'Zapis próbny':member.ends_at?'Rezygnacja: miejsce zwalnia się '+escape(member.ends_at.slice(0,10)):'Aktywny udział'}</p>`).join('')||'<p class="hint">Brak zapisanych zawodników.</p>'}</div><h3>Lista rezerwowa</h3>${waitingMarkup(null,group.id)}<h3>Terminy zajęć</h3><div>${sessions.map(session=>termMarkup(session)).join('')||'<p class="hint">Brak terminów w tym miesiącu.</p>'}</div></div>`;
 }
 
 function seasonName(id) {return state.seasons.find(season=>season.id===id)?.name||'Bez sezonu';}
@@ -436,7 +438,7 @@ function renderRegistrationGroups() {
     const next=state.sessions.find(session=>session.group_id===group.id&&!session.excluded&&session.starts_at>=state.now&&session.starts_at.startsWith(state.now.slice(0,7)));
     const ownMember=state.memberships.some(member=>member.group_id===group.id&&member.status!=='ended'&&state.athletes.some(athlete=>athlete.id===member.athlete_id));
     const eligible=Boolean(next);
-    return `<div class="registration-group"><div class="registration-group-main"><h2>${escape(group.name)}</h2><p>${escape(scheduleLabel(group))}</p><p>Trener: ${escape(trainersFor(group.id).map(trainer=>trainer.name).join(', ')||'Nie przypisano')}</p>${next?`<p class="hint">Najbliższe zajęcia: ${escape(termLabel(next))}</p>`:''}<p>${money(group.price)} / zajęcia</p></div><div class="registration-group-action"><span class="availability ${free===0?'full':''}">Wolne miejsca: ${free} / ${group.capacity}</span><button class="primary" data-register-group="${group.id}" ${eligible?'':'disabled'}>${!next?'Brak zajęć w tym miesiącu':free===0&&!ownMember?'Dołącz do listy rezerwowej':'Zapisz dziecko'}</button></div></div>`;
+    return `<div class="registration-group"><div class="registration-group-main"><h2>${escape(group.name)}</h2><p>${escape(groupAgeLabel(group))}</p><p>${escape(scheduleLabel(group))}</p>${group.parent_description?`<p>${escape(group.parent_description)}</p>`:''}${group.activity_type?`<p>${escape(group.activity_type)}</p>`:''}<p>Trener: ${escape(trainersFor(group.id).map(trainer=>trainer.name).join(', ')||'Nie przypisano')}</p>${next?`<p class="hint">Najbliższe zajęcia: ${escape(termLabel(next))}</p>`:''}<p>${money(group.price)} / zajęcia</p></div><div class="registration-group-action"><span class="availability ${free===0?'full':''}">Wolne miejsca: ${free} / ${group.capacity}</span><button class="primary" data-register-group="${group.id}" ${eligible?'':'disabled'}>${!next?'Brak zajęć w tym miesiącu':free===0&&!ownMember?'Dołącz do listy rezerwowej':'Zapisz dziecko'}</button></div></div>`;
   }).join('')||'<p class="hint">W tej lokalizacji nie ma jeszcze grup.</p>';
 }
 
@@ -570,7 +572,7 @@ $('#create-group').onsubmit = async event => {
   button.disabled = true;
   const body = Object.fromEntries(new FormData(form));
   try {
-    const result = await api(body.id ? 'groups/update' : 'groups', { ...body, id: body.id ? Number(body.id) : undefined, location_id: Number($('#group-location').value), season_id: $('#group-season').value?Number($('#group-season').value):null, registration_open: form.elements.registration_open.checked, price: Math.round(Number(body.price) * 100), trial_price: Math.round(Number(body.trial_price) * 100), capacity: Number(body.capacity), trials: body.trials === 'on', weekday: Number(body.weekday), trainer_ids: selectedIds('#new-group-trainers') });
+    const result = await api(body.id ? 'groups/update' : 'groups', { ...body, min_age:body.min_age===''?null:Number(body.min_age),max_age:body.max_age===''?null:Number(body.max_age),questions:body.questions_text.split('\n').map(s=>s.trim()).filter(Boolean).map(s=>({label:s.startsWith('*')?s.slice(1).trim():s,required:s.startsWith('*')})), id: body.id ? Number(body.id) : undefined, location_id: Number($('#group-location').value), season_id: $('#group-season').value?Number($('#group-season').value):null, registration_open: form.elements.registration_open.checked, price: Math.round(Number(body.price) * 100), trial_price: Math.round(Number(body.trial_price) * 100), capacity: Number(body.capacity), trials: body.trials === 'on', weekday: Number(body.weekday), trainer_ids: selectedIds('#new-group-trainers') });
     form.reset();
     $('#group-dialog').close();
     await refresh();
@@ -694,7 +696,8 @@ function openGroup(id = null) {
   $('#group-edit-note').hidden = !group;
   form.querySelector('[type="submit"]').textContent = group ? 'Zapisz zmiany' : 'Utwórz grupę';
   if (group) {
-    for (const key of ['name','location_id','capacity','price','trial_price','start_date','end_date','start_time','end_time','weekday','season_id','status']) {
+    form.elements.questions_text.value=JSON.parse(group.questions||'[]').map(q=>(q.required?'*':'')+q.label).join('\n');
+    for (const key of ['activity_type','parent_description','min_age','max_age','name','location_id','capacity','price','trial_price','start_date','end_date','start_time','end_time','weekday','season_id','status']) {
       if (group[key] !== null) form.elements[key].value = ['price','trial_price'].includes(key) ? group[key] / 100 : group[key];
     }
     form.elements.trials.checked = Boolean(group.trials);
@@ -797,7 +800,7 @@ function openAthleteDetail(id) {
   $('#athlete-detail').innerHTML = `
     <div class="athlete-tabs" role="tablist" aria-label="Kartoteka zawodnika">${tabs.map(([key,label],index)=>`<button type="button" role="tab" id="athlete-tab-${key}" aria-controls="athlete-panel-${key}" aria-selected="${index===0}" tabindex="${index===0?0:-1}" data-athlete-tab="${key}">${label}</button>`).join('')}</div>
     <section role="tabpanel" id="athlete-panel-data" aria-labelledby="athlete-tab-data" tabindex="0">
-      <dl class="athlete-fields"><div><dt>Imię i nazwisko</dt><dd>${escape(athlete.name)}</dd></div><div><dt>Data urodzenia</dt><dd>${escape(athlete.birth_date||'Nie podano')}</dd></div>${admin?`<div class="athlete-note"><dt>Notatka administracyjna</dt><dd>${escape(athlete.notes||'Brak notatki')}</dd></div>`:''}</dl>
+      ${(state.registration_answers||[]).filter(r=>r.athlete_id===id).map(r=>`<details class="entry"><summary>Formularz: ${escape(state.groups.find(g=>g.id===r.group_id)?.name||'Grupa')}</summary>${Object.entries(JSON.parse(r.values_json)).map(([label,value])=>`<p><strong>${escape(label)}</strong>: ${escape(value||'—')}</p>`).join('')}</details>`).join('')}<dl class="athlete-fields"><div><dt>Imię i nazwisko</dt><dd>${escape(athlete.name)}</dd></div><div><dt>Data urodzenia</dt><dd>${escape(athlete.birth_date||'Nie podano')}</dd></div>${admin?`<div class="athlete-note"><dt>Notatka administracyjna</dt><dd>${escape(athlete.notes||'Brak notatki')}</dd></div>`:''}</dl>
       <button class="secondary" data-edit-athlete="${id}">Edytuj dane</button>
       ${admin?(state.trainer_notes||[]).filter(note=>note.athlete_id===id).map(note=>`<div class="profile-group"><h3>Notatka trenera · ${escape(state.trainers.find(trainer=>trainer.id===note.trainer_id)?.name||'Trener')}</h3><p class="coach-note-body">${escape(note.body||'Brak notatki')}</p></div>`).join(''):''}
     </section>
@@ -805,11 +808,11 @@ function openAthleteDetail(id) {
       <div class="profile-section-heading"><h3>Przypisane grupy</h3><button class="secondary" data-enroll-athlete="${id}">Zapisz do grupy</button></div>
       ${waitingMarkup(id)}${memberships.map(member=>{
         const group=state.groups.find(entry=>entry.id===member.group_id);
-        return `<div class="profile-group"><h3>${escape(group.name)}</h3><p>${escape(group.location)}</p><p>${escape(scheduleLabel(group))}</p><p>Trener: ${escape(trainersFor(group.id).map(trainer=>trainer.name).join(', ')||'Nie przypisano')}</p><span class="pill">${member.status==='suspended'?'Udział zawieszony':member.status==='ended'?'Udział zakończony':member.status==='trial'?'Zapis próbny':'Zapis stały'}</span>${participationMarkup(member)}</div>`;
+        return `<div class="profile-group"><h3>${escape(group.name)}</h3><p>${escape(group.location)}</p><p>${escape(scheduleLabel(group))}</p>${group.parent_description?`<p>${escape(group.parent_description)}</p>`:''}${group.activity_type?`<p>${escape(group.activity_type)}</p>`:''}<p>Trener: ${escape(trainersFor(group.id).map(trainer=>trainer.name).join(', ')||'Nie przypisano')}</p><span class="pill">${member.status==='suspended'?'Udział zawieszony':member.status==='ended'?'Udział zakończony':member.status==='trial'?'Zapis próbny':'Zapis stały'}</span>${participationMarkup(member)}</div>`;
       }).join('')||'<p class="hint">Zawodnik nie jest jeszcze przypisany do grupy.</p>'}
     </section>
     <section role="tabpanel" id="athlete-panel-parent" aria-labelledby="athlete-tab-parent" tabindex="0" hidden>
-      <dl class="athlete-fields"><div><dt>Rodzic</dt><dd>${escape(parent?.name||'Nie podano')}</dd></div><div><dt>Email</dt><dd>${escape(parent?.email||'Nie podano')}</dd></div><div><dt>Telefon</dt><dd>${escape(parent?.phone||'Nie podano')}</dd></div><div><dt>Konto rodzica</dt><dd>${parent?.access_status==='blocked'?'Zablokowane':parentActive?'Aktywne':'Oczekuje na aktywację'}</dd></div></dl>
+      ${(state.registration_answers||[]).filter(r=>r.athlete_id===id).map(r=>`<details class="entry"><summary>Formularz: ${escape(state.groups.find(g=>g.id===r.group_id)?.name||'Grupa')}</summary>${Object.entries(JSON.parse(r.values_json)).map(([label,value])=>`<p><strong>${escape(label)}</strong>: ${escape(value||'—')}</p>`).join('')}</details>`).join('')}<dl class="athlete-fields"><div><dt>Rodzic</dt><dd>${escape(parent?.name||'Nie podano')}</dd></div><div><dt>Email</dt><dd>${escape(parent?.email||'Nie podano')}</dd></div><div><dt>Telefon</dt><dd>${escape(parent?.phone||'Nie podano')}</dd></div><div><dt>Konto rodzica</dt><dd>${parent?.access_status==='blocked'?'Zablokowane':parentActive?'Aktywne':'Oczekuje na aktywację'}</dd></div></dl>
       ${admin&&parent?.access_status!=='blocked'&&!parentActive?`<button class="secondary" data-invite="${athlete.parent_id}">Utwórz link aktywacyjny</button>`:''}
       ${admin?`<button class="secondary" data-parent-access="${athlete.parent_id}" data-access-status="${parent?.access_status==='blocked'?'active':'blocked'}" data-profile="${id}">${parent?.access_status==='blocked'?'Odblokuj konto rodzica':'Zablokuj konto rodzica'}</button>`:''}
       ${(state.guardian_links||[]).filter(link=>link.athlete_id===id&&!link.primary_guardian).map(link=>{

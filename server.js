@@ -1,3 +1,5 @@
+import {transaction as registrationTransaction} from './operations.js';
+import {groupRules,checkAge,saveRegistrationAnswers} from './registration-rules.js';
 import {createDirectoryOperations,nextAthleteId} from './directory-operations.js';
 import {createMembershipOperations} from './membership-operations.js';
 import { createBusiness } from './business.js';
@@ -10,7 +12,7 @@ import { createCalendar } from './operations.js';
 import { createAdmissions } from './admissions.js';
 import { createUserService } from './users.js';
 import http from 'node:http';
-import { migrateFoundations, migrateTrainerAccess, migrateAccountSecurity, migrateSeasons, migrateParticipation, migrateAdmissions, migrateOperations, migrateFinance, migrateWorkspace, migrateMethodology, migrateBusiness, migrateDirectoryOperations } from './migrations.js';
+import { migrateFoundations, migrateTrainerAccess, migrateAccountSecurity, migrateSeasons, migrateParticipation, migrateAdmissions, migrateOperations, migrateFinance, migrateWorkspace, migrateMethodology, migrateBusiness, migrateDirectoryOperations, migrateRegistrationRules } from './migrations.js';
 import { createSeasonService } from './seasons.js';
 import { createParticipation, isCurrentMember, membershipDTO, nextMonthStart } from './participation.js';
 import { createGuardians } from './guardians.js';
@@ -107,6 +109,7 @@ migrateWorkspace(db);
 migrateMethodology(db);
 migrateBusiness(db);
 migrateDirectoryOperations(db);
+migrateRegistrationRules(db);
 const participation=createParticipation(db);
 const seasonService=createSeasonService(db);
 auth.validateSecurity();
@@ -211,7 +214,7 @@ function stateFor(user) {
  const visibleLocations=new Set(visibleGroups.map(g=>g.location_id));
  const guardianLinks=guardians.links().filter(link=>admin||ids.has(link.athlete_id));
  const parentIds=new Set([user.id,...guardianLinks.map(link=>link.user_id)]);
- return {user,finance:financeService.view(user,[...ids]),waiting_list:waiting.map(entry=>({...entry,position:entry.status==='waiting'?db.prepare("SELECT COUNT(*) AS n FROM waiting_list WHERE group_id=? AND status='waiting' AND id<=?").get(entry.group_id,entry.id).n:null})),admission_settings:admissions.settings(),trial_decisions:all('SELECT t.*,e.athlete_id,e.group_id,e.trial_id FROM trial_decisions t JOIN enrollments e ON e.id=t.enrollment_id').filter(entry=>admin||ids.has(entry.athlete_id)),withdrawal_ends_at:nextMonthStart(),seasons:all('SELECT * FROM seasons ORDER BY start_date DESC').filter(season=>admin||visibleGroups.some(group=>group.season_id===season.id)),athletes,guardian_links:guardianLinks,guardian_invitations:all('SELECT id,athlete_id,email,invited_by,expires_at FROM guardian_invitations WHERE expires_at>?',Date.now()).filter(invitation=>admin||ids.has(invitation.athlete_id)),parents:all("SELECT id,name,email,phone,access_status,password_hash IS NOT NULL AS active FROM users WHERE role='parent' ORDER BY name").filter(parent=>admin||parentIds.has(parent.id)),memberships:all('SELECT * FROM memberships').filter(m=>admin||ids.has(m.athlete_id)).map(m=>membershipDTO(m)),membership_periods:all('SELECT * FROM membership_periods ORDER BY id DESC').filter(period=>admin||ids.has(period.athlete_id)),locations:admin?all('SELECT * FROM locations ORDER BY name'):all('SELECT id,name,status FROM locations ORDER BY name').filter(l=>availableLocations.has(l.id)||visibleLocations.has(l.id)),trainer_notes:admin?all('SELECT * FROM trainer_notes'):[],trainers:admin?all('SELECT t.*,u.password_hash IS NOT NULL AS account_active FROM trainers t LEFT JOIN users u ON u.id=t.user_id ORDER BY t.name'):all('SELECT id,name FROM trainers ORDER BY name').filter(t=>trainerIds.has(t.id)),group_trainers:trainerLinks,logo:existsSync(logoPath)?'/logo?v='+Date.now():null,groups:visibleGroups.map(group=>({...group,reserved_count:admissions.reserved(group.id),registration_available:availableLocations.has(group.location_id)&&seasonService.available(group)})),sessions:sessionsWithStatus().filter(s=>admin||ownGroupIds.has(s.group_id)||(visibleIds.has(s.group_id)&&s.starts_at>=warsawNow())),exclusions:admin?all('SELECT * FROM exclusions ORDER BY start_date'):[],enrollments,adjustments:all('SELECT * FROM adjustments ORDER BY id DESC').filter(a=>admin||enrollmentIds.has(a.enrollment_id)),now:warsawNow()};
+ return {user,registration_answers:all('SELECT * FROM registration_answers').filter(a=>admin||ids.has(a.athlete_id)),finance:financeService.view(user,[...ids]),waiting_list:waiting.map(entry=>({...entry,position:entry.status==='waiting'?db.prepare("SELECT COUNT(*) AS n FROM waiting_list WHERE group_id=? AND status='waiting' AND id<=?").get(entry.group_id,entry.id).n:null})),admission_settings:admissions.settings(),trial_decisions:all('SELECT t.*,e.athlete_id,e.group_id,e.trial_id FROM trial_decisions t JOIN enrollments e ON e.id=t.enrollment_id').filter(entry=>admin||ids.has(entry.athlete_id)),withdrawal_ends_at:nextMonthStart(),seasons:all('SELECT * FROM seasons ORDER BY start_date DESC').filter(season=>admin||visibleGroups.some(group=>group.season_id===season.id)),athletes,guardian_links:guardianLinks,guardian_invitations:all('SELECT id,athlete_id,email,invited_by,expires_at FROM guardian_invitations WHERE expires_at>?',Date.now()).filter(invitation=>admin||ids.has(invitation.athlete_id)),parents:all("SELECT id,name,email,phone,access_status,password_hash IS NOT NULL AS active FROM users WHERE role='parent' ORDER BY name").filter(parent=>admin||parentIds.has(parent.id)),memberships:all('SELECT * FROM memberships').filter(m=>admin||ids.has(m.athlete_id)).map(m=>membershipDTO(m)),membership_periods:all('SELECT * FROM membership_periods ORDER BY id DESC').filter(period=>admin||ids.has(period.athlete_id)),locations:admin?all('SELECT * FROM locations ORDER BY name'):all('SELECT id,name,status FROM locations ORDER BY name').filter(l=>availableLocations.has(l.id)||visibleLocations.has(l.id)),trainer_notes:admin?all('SELECT * FROM trainer_notes'):[],trainers:admin?all('SELECT t.*,u.password_hash IS NOT NULL AS account_active FROM trainers t LEFT JOIN users u ON u.id=t.user_id ORDER BY t.name'):all('SELECT id,name FROM trainers ORDER BY name').filter(t=>trainerIds.has(t.id)),group_trainers:trainerLinks,logo:existsSync(logoPath)?'/logo?v='+Date.now():null,groups:visibleGroups.map(group=>({...group,reserved_count:admissions.reserved(group.id),registration_available:availableLocations.has(group.location_id)&&seasonService.available(group)})),sessions:sessionsWithStatus().filter(s=>admin||ownGroupIds.has(s.group_id)||(visibleIds.has(s.group_id)&&s.starts_at>=warsawNow())),exclusions:admin?all('SELECT * FROM exclusions ORDER BY start_date'):[],enrollments,adjustments:all('SELECT * FROM adjustments ORDER BY id DESC').filter(a=>admin||enrollmentIds.has(a.enrollment_id)),now:warsawNow()};
 }
 async function readJSON(req) {
  if(!req.headers['content-type']?.startsWith('application/json')) throw Object.assign(Error('Wymagany format JSON.'),{status:415});
@@ -219,6 +222,8 @@ async function readJSON(req) {
  return JSON.parse(raw);
 }
 function saveEnrollment(b,athlete,payerId=athlete.parent_id) {
+ const settings=group(b.group_id);checkAge(settings,db.prepare('SELECT birth_date FROM athletes WHERE id=?').get(athlete.id)?.birth_date);
+ saveRegistrationAnswers(db,settings,athlete,b.answers);
  admissions.sync();
  workspaceService.requirePolicies(athlete.id,payerId,[]);
  const parent=db.prepare('SELECT * FROM users WHERE id=?').get(payerId);
@@ -267,7 +272,7 @@ const server = http.createServer(withRequestContext(async (req,res) => {
    const activeGroups = new Set(all("SELECT g.* FROM groups g JOIN locations l ON l.id=g.location_id WHERE l.status='active'").filter(g=>seasonService.available(g)).map(g=>g.id));
    const publicLinks=all('SELECT * FROM group_trainers').filter(link=>activeGroups.has(link.group_id));
    const publicTrainerIds=new Set(publicLinks.map(link=>link.trainer_id));
-   return send(200,{documents:workspaceService.policies(),logo:existsSync(logoPath)?'/logo':null,locations:activeLocations,groups:all(`SELECT id,location_id,name,capacity,price,trial_price,trials,weekday,start_time,end_time,(SELECT COUNT(*) FROM memberships m WHERE m.group_id=groups.id AND m.status IN ('active','trial') AND (m.ends_at IS NULL OR m.ends_at>academy_now())) AS member_count FROM groups`).filter(g=>activeGroups.has(g.id)).map(g=>({...g,reserved_count:admissions.reserved(g.id)})),trainers:all('SELECT id,name FROM trainers ORDER BY name').filter(trainer=>publicTrainerIds.has(trainer.id)),group_trainers:publicLinks,sessions:sessionsWithStatus().filter(s=>activeGroups.has(s.group_id)&&!s.cancelled&&s.starts_at>=now).map(s=>({id:s.id,group_id:s.group_id,starts_at:s.starts_at,ends_at:s.ends_at,excluded:s.excluded})),now});
+   return send(200,{documents:workspaceService.policies(),logo:existsSync(logoPath)?'/logo':null,locations:activeLocations,groups:all(`SELECT id,location_id,name,capacity,price,trial_price,trials,weekday,start_time,end_time,activity_type,parent_description,min_age,max_age,questions,(SELECT COUNT(*) FROM memberships m WHERE m.group_id=groups.id AND m.status IN ('active','trial') AND (m.ends_at IS NULL OR m.ends_at>academy_now())) AS member_count FROM groups`).filter(g=>activeGroups.has(g.id)).map(g=>({...g,reserved_count:admissions.reserved(g.id)})),trainers:all('SELECT id,name FROM trainers ORDER BY name').filter(trainer=>publicTrainerIds.has(trainer.id)),group_trainers:publicLinks,sessions:sessionsWithStatus().filter(s=>activeGroups.has(s.group_id)&&!s.cancelled&&s.starts_at>=now).map(s=>({id:s.id,group_id:s.group_id,starts_at:s.starts_at,ends_at:s.ends_at,excluded:s.excluded})),now});
   }
   if(req.method==='POST'&&url.pathname==='/api/public/quote') {
    const body=await readJSON(req);delete body.athlete_id;const q=quote(body);return send(200,{amount:q.amount,count:q.count});
@@ -393,7 +398,7 @@ const server = http.createServer(withRequestContext(async (req,res) => {
     const current=auth.user(req);
     if(!current||!['admin','parent'].includes(current.role))return send(401,{error:'Zaloguj się ponownie.'});
     const athlete=athleteById(b.athlete_id,current);
-    if(url.pathname==='/api/waiting/join')return send(200,admissions.join(b,athlete,user.role==='parent'?user.id:athlete.parent_id));
+    if(url.pathname==='/api/waiting/join')return send(200,registrationTransaction(db,()=>{const settings=group(b.group_id);checkAge(settings,athlete.birth_date);saveRegistrationAnswers(db,settings,athlete,b.answers);return admissions.join(b,athlete,current.role==='parent'?current.id:athlete.parent_id);}));
     if(url.pathname==='/api/waiting/cancel')return send(200,admissions.cancel(b,athlete));
     if(url.pathname==='/api/waiting/accept')return send(200,admissions.accept(b,athlete));
     if(url.pathname==='/api/trials/quote'){const q=admissions.conversionQuote(b,athlete);return send(200,{amount:q.amount,count:q.count});}
@@ -514,7 +519,7 @@ const server = http.createServer(withRequestContext(async (req,res) => {
       return {starts_at:date+':00',ends_at:null};
      });
     }
-    const settings=seasonService.groupSettings(b,existing,terms);
+    const settings=seasonService.groupSettings(b,existing,terms),rules=groupRules(b,existing||{});
     db.exec('BEGIN');
     try {
      const before=chargedTotals(),now=warsawNow();
@@ -523,6 +528,7 @@ const server = http.createServer(withRequestContext(async (req,res) => {
      const id=existing?.id||Number(db.prepare('INSERT INTO groups(location,location_id,name,capacity,price,trial_price,trials) VALUES(?,?,?,?,?,?,?)').run(location.name,location.id,name,capacity,price,trialPrice,b.trials?1:0).lastInsertRowid);
      db.prepare('UPDATE groups SET location=?,location_id=?,name=?,capacity=?,price=?,trial_price=?,trials=?,start_date=?,end_date=?,start_time=?,end_time=?,weekday=? WHERE id=?').run(location.name,location.id,name,capacity,price,trialPrice,b.trials?1:0,b.start_date||null,b.end_date||null,b.start_time||null,b.end_time||null,b.weekday??null,id);
      db.prepare('UPDATE groups SET season_id=?,status=?,registration_open=? WHERE id=?').run(settings.season_id,settings.status,settings.registration_open,id);
+     db.prepare('UPDATE groups SET activity_type=?,parent_description=?,min_age=?,max_age=?,questions=? WHERE id=?').run(rules.activity_type,rules.parent_description,rules.min_age,rules.max_age,rules.questions,id);
      assignTrainers(id,assigned);
      if(!existing) for(const term of terms) db.prepare('INSERT INTO sessions(group_id,starts_at,ends_at,price,location_id) VALUES(?,?,?,?,?)').run(id,term.starts_at,term.ends_at,price,location.id);
      else {

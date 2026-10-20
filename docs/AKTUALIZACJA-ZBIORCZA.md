@@ -4,6 +4,27 @@ Zakres: lokalna aplikacja Node.js/SQLite. Nie uruchomiono operatora płatności,
 wysyłki email ani SMS. Zaksięgowanie wpłaty, oznaczenie zwrotu i oznaczenie wypłaty
 są ewidencją operacji wykonanej poza aplikacją. Nie wykonują przelewów.
 
+## Uzupełnienie: grupy i formularz zapisu (migracja 13)
+
+W ustawieniach grupy dostępne są rodzaj zajęć, opis dla rodzica, minimalny i maksymalny
+wiek oraz maksymalnie 10 własnych pytań tekstowych. Jedno pytanie w wierszu;
+gwiazdka na początku oznacza obowiązek odpowiedzi. Odpowiedź ma limit 500 znaków.
+Rodzic widzi pola zarówno w publicznym formularzu, jak i przy zapisie z panelu.
+Odpowiedzi są w kartotece dziecka, dostępne administratorowi i jego opiekunom;
+trener nie otrzymuje tych danych automatycznie. Zmiany odpowiedzi mają audyt.
+
+Wiek jest sprawdzany po stronie serwera przy nowym zapisie (także próbnym),
+przeniesieniu do innej grupy i dołączeniu do listy rezerwowej. Liczymy ukończone
+lata w dniu zapisu, obie granice są włączne. Dla urodzonych 29 lutego ukończenie
+kolejnego roku w roku nieprzestępnym następuje tu 1 marca. Jeśli określono choć jedną
+granicę, data urodzenia jest wymagana. Stare grupy mają brak ograniczeń, więc
+migracja nie usuwa ani nie zmienia istniejących zapisów. Zmiana zakresu wieku
+nie wypisuje obecnych uczestników. Wymagane pytania są sprawdzane również przez API;
+wcześniejsze odpowiedzi z kolejki zachowują swoją wersję przy przyjęciu oferty.
+
+Walidacja: 32 testy Node, testy integracyjne zapisów/operacji/migracji i 6 scenariuszy
+Playwright; publiczny zapis z wymaganym wiekiem i dodatkowym pytaniem sprawdzony w przeglądarce.
+
 ## Działające przepływy
 
 - Kalendarz administratora, własne terminy trenera i terminy dzieci rodzica;
@@ -91,8 +112,8 @@ To działająca zbiorcza rozbudowa, **nie pełny odbiór wszystkich punktów spe
 | Moduł | Stan i pozostający zakres |
 |---|---|
 | 1 Dostęp | Trzy role, MFA, reset, użytkownicy, opiekunowie i audyt działają; realny email wyłączony. |
-| 2 Grupy/sprzęt | Podstawowe operacje i sprzęt działają; pozostały dodatkowe parametry wieku/typu/opisu grup, zdjęcia sprzętu, przyszłe masowe kontynuacje, pełne łączenie/dzielenie grup i jawny wyjątek limitu. |
-| 3 Kartoteki | Import/eksport, kontrolowane połączenie i zgody działają; pozostały własne pola formularza, walidacja wieku grup, łączenie konfliktujących historii i kont rodziców, konfiguracja osadzania WordPress. |
+| 2 Grupy/sprzęt | Podstawowe operacje i sprzęt działają; pozostały zdjęcia sprzętu, przyszłe masowe kontynuacje, pełne łączenie/dzielenie grup i jawny wyjątek limitu. |
+| 3 Kartoteki | Import/eksport, kontrolowane połączenie i zgody działają; pozostały łączenie konfliktujących historii i kont rodziców, konfiguracja osadzania WordPress. |
 | 4 Kalendarz | Dziennik i realizacja działają; pozostały statystyki frekwencji, pełny zestaw filtrów UI, przesunięcia między miesiącami i zmiana cyklu od dowolnej przyszłej daty. |
 | 5 Rodzic | Dostęp do własnych danych, rozmów, zgód i postępów działa; automatyczne przypomnienia i pulpit zbiorczy wymagają rozwinięcia. |
 | 6 Rozliczenia | Księga, import, cenniki i naliczanie działają; pozostały historyczny VAT, terminy płatności per pozycja, automatyczne wpisowe/przypomnienia, propozycje dopasowań bankowych. Operator online wyłączony zgodnie z poleceniem. |

@@ -44,16 +44,20 @@ test('placówka, publiczny zapis, blokada rodzica, dziennik i mobilny panel',asy
  await expect(page.locator('#location-list')).toContainText('Testowa 12, Poznań');
  const state=await (await page.request.get(origin+'/api/state')).json();
  const location=state.locations[0].id;
- await api(page.context(),'groups',{location_id:location,name:'Liski',capacity:10,price:3500,trial_price:0,trials:true,dates:['2099-09-10T13:00']});
+ await api(page.context(),'groups',{location_id:location,name:'Liski',min_age:3,max_age:7,activity_type:'Gimnastyka',parent_description:'Ruch i zabawa',questions:[{label:'Grupa przedszkolna',required:true}],capacity:10,price:3500,trial_price:0,trials:true,dates:['2099-09-10T13:00']});
  // Parent enters via the real public wizard, no fabricated account or payment.
  const parentContext=await browser.newContext();const parentPage=await parentContext.newPage();
  try {
   parentPage.on('pageerror',error=>errors.push(error.message));
   await parentPage.goto(origin+'/zapisy');
   await parentPage.selectOption('#public-location',String(location));
+  await expect(parentPage.locator('#public-group-list')).toContainText('Ruch i zabawa');
   await parentPage.locator('[name=group_id]').check();
   await parentPage.locator('#to-child').click();
   await parentPage.locator('[name=child_first_name]').fill('Jan');await parentPage.locator('[name=child_last_name]').fill('Testowy');
+  await expect(parentPage.locator('[name=birth_date]')).toHaveAttribute('required','');
+  await parentPage.locator('[name=birth_date]').fill('2095-01-01');
+  await parentPage.locator('[data-question="Grupa przedszkolna"]').fill('Liski');
   await parentPage.locator('#to-parent').click();
   for(const [name,value] of Object.entries({parent_first_name:'Anna',parent_last_name:'Testowa',email:'parent@example.org',phone:'123456789',password:'parent-test-password',password_confirmation:'parent-test-password'}))await parentPage.locator(`[name=${name}]`).fill(value);
   await parentPage.locator('#public-submit').click();await expect(parentPage).toHaveURL(/#children/);

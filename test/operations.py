@@ -158,6 +158,17 @@ with tempfile.TemporaryDirectory() as folder:
   assert next(m for m in moved['memberships'] if m['athlete_id']==duplicate and m['group_id']==group)['status']=='ended'
   assert next(m for m in moved['memberships'] if m['athlete_id']==duplicate and m['group_id']==destination)['status']=='active'
   assert next(e for e in moved['enrollments'] if e['athlete_id']==duplicate and e['group_id']==destination)['amount']==3150
+  # Group age and required questions are checked by the API, not only the browser.
+  ruled=admin.call('groups',{'name':'Od 3 do 5 lat','location_id':location,'capacity':10,'price':3500,'trial_price':0,'trials':True,'dates':['2099-09-15T13:00'],'min_age':3,'max_age':5,'activity_type':'Gimnastyka','parent_description':'Opis dla rodzica','questions':[{'label':'Grupa przedszkolna','required':True}]},201)['id']
+  parent.call('enrollments',{'group_id':ruled,'athlete_id':newer,'answers':{'Grupa przedszkolna':'Liski'}},400)
+  young=parent.call('athletes',{'name':'Za młody','birth_date':'2096-09-02'},201)['id']
+  parent.call('enrollments',{'group_id':ruled,'athlete_id':young,'answers':{'Grupa przedszkolna':'Liski'}},400)
+  assert 'Wiek dziecka' in parent.call('waiting/join',{'group_id':ruled,'athlete_id':young},400)['error']
+  birthday=parent.call('athletes',{'name':'Trzecie urodziny','birth_date':'2096-09-01'},201)['id']
+  parent.call('enrollments',{'group_id':ruled,'athlete_id':birthday},400)
+  parent.call('enrollments',{'group_id':ruled,'athlete_id':birthday,'answers':{'Grupa przedszkolna':'Liski'}},201)
+  assert any(r['athlete_id']==birthday and 'Liski' in r['values_json'] for r in parent.call('state')['registration_answers'])
+  assert not other.call('state')['registration_answers']
   monthly=admin.call('groups',{'name':'Miesięczna','location_id':location,'capacity':10,'price':2000,'trial_price':0,'trials':False,'dates':['2099-09-15T13:00','2099-10-08T13:00']},201)['id']
   parent.call('enrollments',{'group_id':monthly,'athlete_id':duplicate},201)
   admin.call('finance/price',{'group_id':monthly,'starts_on':'2099-10-01','amount':5000,'vat_bps':None})

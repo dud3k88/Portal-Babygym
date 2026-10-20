@@ -318,3 +318,18 @@ export function migrateDirectoryOperations(db){
   db.prepare('INSERT INTO schema_migrations VALUES(12,?,?)').run('Controlled athlete record merges',new Date().toISOString());db.exec('COMMIT');
  }catch(e){db.exec('ROLLBACK');throw e;}
 }
+
+export function migrateRegistrationRules(db){
+ if(db.prepare('SELECT version FROM schema_migrations WHERE version=13').get())return;
+ db.exec('BEGIN IMMEDIATE');try{
+ db.exec(`ALTER TABLE groups ADD COLUMN activity_type TEXT NOT NULL DEFAULT '';
+ ALTER TABLE groups ADD COLUMN parent_description TEXT NOT NULL DEFAULT '';
+ ALTER TABLE groups ADD COLUMN min_age INTEGER CHECK(min_age BETWEEN 0 AND 18);
+ ALTER TABLE groups ADD COLUMN max_age INTEGER CHECK(max_age BETWEEN 0 AND 18);
+ ALTER TABLE groups ADD COLUMN questions TEXT NOT NULL DEFAULT '[]';
+ CREATE TABLE registration_answers(group_id INTEGER REFERENCES groups(id),athlete_id INTEGER REFERENCES athletes(id),definition_json TEXT NOT NULL,values_json TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(group_id,athlete_id));`);
+ replaceAuditTriggers(db,'groups',db.prepare('PRAGMA table_info(groups)').all().map(c=>c.name));
+ replaceAuditTriggers(db,'registration_answers',['group_id','athlete_id','definition_json','values_json','updated_at'],['group_id','athlete_id']);
+ db.prepare('INSERT INTO schema_migrations VALUES(13,?,?)').run('Group age rules and registration questions',new Date().toISOString());db.exec('COMMIT');
+ }catch(e){db.exec('ROLLBACK');throw e;}
+}
