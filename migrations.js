@@ -211,3 +211,110 @@ export function migrateAdmissions(db) {
   db.exec('COMMIT');
  }catch(error){db.exec('ROLLBACK');throw error;}
 }
+
+export function migrateOperations(db) {
+ if(db.prepare('SELECT version FROM schema_migrations WHERE version=7').get())return;
+ db.exec('BEGIN IMMEDIATE');try {
+  db.exec(`CREATE TABLE lesson_assignment_snapshots(session_id INTEGER PRIMARY KEY REFERENCES sessions(id));
+   CREATE TABLE lesson_trainers(session_id INTEGER REFERENCES sessions(id),trainer_id INTEGER REFERENCES trainers(id),PRIMARY KEY(session_id,trainer_id));
+   CREATE TABLE attendance(session_id INTEGER REFERENCES sessions(id),athlete_id INTEGER REFERENCES athletes(id),status TEXT NOT NULL CHECK(status IN ('present','absent','unmarked')),actor_id INTEGER REFERENCES users(id),reason TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL,PRIMARY KEY(session_id,athlete_id));
+   CREATE TABLE absence_reports(session_id INTEGER REFERENCES sessions(id),athlete_id INTEGER REFERENCES athletes(id),active INTEGER NOT NULL CHECK(active IN (0,1)),actor_id INTEGER REFERENCES users(id),updated_at TEXT NOT NULL,PRIMARY KEY(session_id,athlete_id));
+   CREATE TABLE lesson_completion(session_id INTEGER PRIMARY KEY REFERENCES sessions(id),completed INTEGER NOT NULL CHECK(completed IN (0,1)),actor_id INTEGER REFERENCES users(id),reason TEXT NOT NULL DEFAULT '',updated_at TEXT NOT NULL);
+   CREATE TABLE lesson_changes(id INTEGER PRIMARY KEY,session_id INTEGER REFERENCES sessions(id),reason TEXT NOT NULL,actor_id INTEGER REFERENCES users(id),created_at TEXT NOT NULL);`);
+  for(const [table,columns,keys] of [
+   ['lesson_trainers',['session_id','trainer_id'],['session_id','trainer_id']],
+   ['attendance',['session_id','athlete_id','status','actor_id','reason','updated_at'],['session_id','athlete_id']],
+   ['absence_reports',['session_id','athlete_id','active','actor_id','updated_at'],['session_id','athlete_id']],
+   ['lesson_completion',['session_id','completed','actor_id','reason','updated_at'],['session_id']],
+   ['lesson_changes',['id','session_id','reason','actor_id','created_at'],['id']]
+  ])replaceAuditTriggers(db,table,columns,keys);
+  if(db.prepare('PRAGMA foreign_key_check').all().length)throw Error('Migracja narusza powiązania danych.');
+ db.prepare('INSERT INTO schema_migrations VALUES(7,?,?)').run('Calendar, lesson assignments and attendance',new Date().toISOString());db.exec('COMMIT');
+ }catch(e){db.exec('ROLLBACK');throw e;}
+}
+
+export function migrateFinance(db){
+ if(db.prepare('SELECT version FROM schema_migrations WHERE version=8').get())return;
+ db.exec('BEGIN IMMEDIATE');try{
+ db.exec(`CREATE TABLE payments(id INTEGER PRIMARY KEY,athlete_id INTEGER NOT NULL REFERENCES athletes(id),payer_id INTEGER NOT NULL REFERENCES users(id),amount INTEGER NOT NULL CHECK(amount>0),reference TEXT NOT NULL UNIQUE,paid_on TEXT NOT NULL,actor_id INTEGER REFERENCES users(id),created_at TEXT NOT NULL);
+ CREATE TABLE payment_allocations(id INTEGER PRIMARY KEY,payment_id INTEGER NOT NULL REFERENCES payments(id),enrollment_id INTEGER NOT NULL REFERENCES enrollments(id),amount INTEGER NOT NULL CHECK(amount<>0),reason TEXT NOT NULL DEFAULT '',actor_id INTEGER REFERENCES users(id),created_at TEXT NOT NULL);
+ CREATE TABLE refunds(id INTEGER PRIMARY KEY,payment_id INTEGER NOT NULL REFERENCES payments(id),amount INTEGER NOT NULL CHECK(amount>0),reason TEXT NOT NULL,reference TEXT NOT NULL UNIQUE,status TEXT NOT NULL CHECK(status IN ('approved','paid')),paid_on TEXT,actor_id INTEGER REFERENCES users(id),created_at TEXT NOT NULL);
+ CREATE TABLE price_versions(id INTEGER PRIMARY KEY,group_id INTEGER REFERENCES groups(id),starts_on TEXT NOT NULL,amount INTEGER NOT NULL CHECK(amount>=0),vat_bps INTEGER CHECK(vat_bps BETWEEN 0 AND 10000),UNIQUE(group_id,starts_on));
+ CREATE TABLE discounts(id INTEGER PRIMARY KEY,athlete_id INTEGER REFERENCES athletes(id),starts_on TEXT NOT NULL,ends_on TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('percent','fixed')),value INTEGER NOT NULL CHECK(value>=0),reason TEXT NOT NULL);
+ CREATE TABLE automatic_billing_months(month TEXT PRIMARY KEY,created_at TEXT NOT NULL);
+ CREATE TABLE finance_settings(id INTEGER PRIMARY KEY CHECK(id=1),auto_monthly INTEGER NOT NULL DEFAULT 0,since_month TEXT,due_day INTEGER NOT NULL DEFAULT 10,bank_account TEXT NOT NULL DEFAULT '');
+ INSERT INTO finance_settings(id) VALUES(1);
+ CREATE TABLE annual_fee_rules(season_id INTEGER PRIMARY KEY REFERENCES seasons(id),amount INTEGER NOT NULL CHECK(amount>=0));
+ CREATE TABLE annual_fees(athlete_id INTEGER REFERENCES athletes(id),season_id INTEGER REFERENCES seasons(id),enrollment_id INTEGER REFERENCES enrollments(id),amount INTEGER NOT NULL,reason TEXT NOT NULL,PRIMARY KEY(athlete_id,season_id));
+ CREATE TABLE billing_runs(enrollment_id INTEGER PRIMARY KEY REFERENCES enrollments(id),actor_id INTEGER REFERENCES users(id),created_at TEXT NOT NULL);
+ CREATE INDEX allocations_charge ON payment_allocations(enrollment_id);
+ CREATE INDEX allocations_payment ON payment_allocations(payment_id);`);
+ for(const table of ['payments','payment_allocations','refunds','price_versions','discounts','billing_runs','finance_settings','automatic_billing_months','annual_fee_rules','annual_fees']){const cols=db.prepare('PRAGMA table_info('+table+')').all().map(c=>c.name);replaceAuditTriggers(db,table,cols,table==='billing_runs'?['enrollment_id']:table==='automatic_billing_months'?['month']:table==='annual_fee_rules'?['season_id']:table==='annual_fees'?['athlete_id','season_id']:['id']);}
+ if(db.prepare('PRAGMA foreign_key_check').all().length)throw Error('Migracja narusza powiązania danych.');
+ db.prepare('INSERT INTO schema_migrations VALUES(8,?,?)').run('Payments, allocations, refunds and dated prices',new Date().toISOString());db.exec('COMMIT');
+ }catch(e){db.exec('ROLLBACK');throw e;}
+}
+
+export function migrateWorkspace(db){
+ if(db.prepare('SELECT version FROM schema_migrations WHERE version=9').get())return;
+ db.exec('BEGIN IMMEDIATE');try{
+ db.exec(`CREATE TABLE conversations(id INTEGER PRIMARY KEY,owner_id INTEGER NOT NULL REFERENCES users(id),subject TEXT NOT NULL,category TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'new' CHECK(status IN ('new','progress','waiting','closed')),created_at TEXT NOT NULL);
+ CREATE TABLE conversation_messages(id INTEGER PRIMARY KEY,conversation_id INTEGER REFERENCES conversations(id),sender_id INTEGER REFERENCES users(id),body TEXT NOT NULL,created_at TEXT NOT NULL);
+ CREATE TABLE notifications(id INTEGER PRIMARY KEY,user_id INTEGER REFERENCES users(id),event_key TEXT NOT NULL,title TEXT NOT NULL,created_at TEXT NOT NULL,read_at TEXT,UNIQUE(user_id,event_key));
+ CREATE TABLE policy_documents(id INTEGER PRIMARY KEY,kind TEXT NOT NULL CHECK(kind IN ('terms','privacy','som','photos','marketing')),version TEXT NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,published INTEGER NOT NULL CHECK(published IN (0,1)),created_at TEXT NOT NULL,UNIQUE(kind,version));
+ CREATE TABLE policy_acceptances(id INTEGER PRIMARY KEY,document_id INTEGER REFERENCES policy_documents(id),athlete_id INTEGER REFERENCES athletes(id),user_id INTEGER REFERENCES users(id),accepted INTEGER NOT NULL CHECK(accepted IN (0,1)),method TEXT NOT NULL,created_at TEXT NOT NULL);
+ CREATE TABLE equipment(id INTEGER PRIMARY KEY,name TEXT NOT NULL,category TEXT NOT NULL,description TEXT NOT NULL DEFAULT '');
+ CREATE TABLE equipment_stock(equipment_id INTEGER REFERENCES equipment(id),location_id INTEGER REFERENCES locations(id),status TEXT NOT NULL CHECK(status IN ('good','damaged','replace','retired')),quantity INTEGER NOT NULL CHECK(quantity>=0),PRIMARY KEY(equipment_id,location_id,status));
+ CREATE TABLE equipment_movements(id INTEGER PRIMARY KEY,equipment_id INTEGER REFERENCES equipment(id),from_location INTEGER REFERENCES locations(id),to_location INTEGER REFERENCES locations(id),status TEXT NOT NULL,quantity INTEGER NOT NULL,reason TEXT NOT NULL,actor_id INTEGER REFERENCES users(id),created_at TEXT NOT NULL);
+ CREATE TABLE equipment_issues(id INTEGER PRIMARY KEY,equipment_id INTEGER REFERENCES equipment(id),location_id INTEGER REFERENCES locations(id),body TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'open',actor_id INTEGER REFERENCES users(id),created_at TEXT NOT NULL);`);
+ for(const table of ['conversations','conversation_messages','notifications','policy_documents','policy_acceptances','equipment','equipment_stock','equipment_movements','equipment_issues']){const cols=db.prepare('PRAGMA table_info('+table+')').all().map(c=>c.name);replaceAuditTriggers(db,table,cols,table==='equipment_stock'?['equipment_id','location_id','status']:['id']);}
+ if(db.prepare('PRAGMA foreign_key_check').all().length)throw Error('Migracja narusza powiązania danych.');
+ db.prepare('INSERT INTO schema_migrations VALUES(9,?,?)').run('Conversations, policies, notifications and equipment',new Date().toISOString());db.exec('COMMIT');
+ }catch(e){db.exec('ROLLBACK');throw e;}
+}
+
+export function migrateMethodology(db){
+ if(db.prepare('SELECT version FROM schema_migrations WHERE version=10').get())return;
+ db.exec('BEGIN IMMEDIATE');try{
+ db.exec(`CREATE TABLE programs(id INTEGER PRIMARY KEY,name TEXT NOT NULL,min_age INTEGER NOT NULL,max_age INTEGER NOT NULL,description TEXT NOT NULL);
+ CREATE TABLE program_skills(id INTEGER PRIMARY KEY,program_id INTEGER REFERENCES programs(id),name TEXT NOT NULL,criteria TEXT NOT NULL,stage TEXT NOT NULL);
+ CREATE TABLE group_programs(group_id INTEGER PRIMARY KEY REFERENCES groups(id),program_id INTEGER REFERENCES programs(id));
+ CREATE TABLE lesson_plans(id INTEGER PRIMARY KEY,owner_id INTEGER REFERENCES users(id),program_id INTEGER REFERENCES programs(id),title TEXT NOT NULL,warmup TEXT NOT NULL,main_part TEXT NOT NULL,games TEXT NOT NULL,ending TEXT NOT NULL,equipment TEXT NOT NULL,minutes INTEGER NOT NULL,private INTEGER NOT NULL CHECK(private IN (0,1)));
+ CREATE TABLE learning_assets(id INTEGER PRIMARY KEY,owner_id INTEGER REFERENCES users(id),group_id INTEGER REFERENCES groups(id),program_id INTEGER REFERENCES programs(id),title TEXT NOT NULL,tags TEXT NOT NULL DEFAULT '',audience TEXT NOT NULL CHECK(audience IN ('private','trainers','parents')),mime TEXT NOT NULL,bytes INTEGER NOT NULL,content BLOB NOT NULL,created_at TEXT NOT NULL);
+ CREATE TABLE skill_assessments(id INTEGER PRIMARY KEY,athlete_id INTEGER REFERENCES athletes(id),skill_id INTEGER REFERENCES program_skills(id),status TEXT NOT NULL CHECK(status IN ('new','learning','mastered')),comment TEXT NOT NULL,published INTEGER NOT NULL CHECK(published IN (0,1)),actor_id INTEGER REFERENCES users(id),created_at TEXT NOT NULL);
+ CREATE TABLE adventure_cards(athlete_id INTEGER PRIMARY KEY REFERENCES athletes(id),hero TEXT NOT NULL CHECK(hero IN ('fox','giraffe','hare','turtle','seal','monkey')),created_at TEXT NOT NULL);`);
+ for(const table of ['programs','program_skills','group_programs','lesson_plans','learning_assets','skill_assessments','adventure_cards']){const cols=db.prepare('PRAGMA table_info('+table+')').all().map(c=>c.name).filter(c=>c!=='content');replaceAuditTriggers(db,table,cols,table==='group_programs'?['group_id']:table==='adventure_cards'?['athlete_id']:['id']);}
+ if(db.prepare('PRAGMA foreign_key_check').all().length)throw Error('Migracja narusza powiązania danych.');
+ db.prepare('INSERT INTO schema_migrations VALUES(10,?,?)').run('Methodology, private library and progress history',new Date().toISOString());db.exec('COMMIT');
+ }catch(e){db.exec('ROLLBACK');throw e;}
+}
+
+export function migrateBusiness(db){
+ if(db.prepare('SELECT version FROM schema_migrations WHERE version=11').get())return;
+ db.exec('BEGIN IMMEDIATE');try{
+ db.exec(`ALTER TABLE lesson_completion ADD COLUMN actual_minutes INTEGER;
+ CREATE TABLE trainer_contracts(trainer_id INTEGER PRIMARY KEY REFERENCES trainers(id),kind TEXT NOT NULL,starts_on TEXT NOT NULL,ends_on TEXT,presentation TEXT NOT NULL);
+ CREATE TABLE trainer_availability(id INTEGER PRIMARY KEY,trainer_id INTEGER REFERENCES trainers(id),starts_at TEXT NOT NULL,ends_at TEXT NOT NULL,weekday INTEGER,kind TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',reason TEXT NOT NULL,actor_id INTEGER REFERENCES users(id));
+ CREATE TABLE wage_rates(id INTEGER PRIMARY KEY,trainer_id INTEGER REFERENCES trainers(id),location_id INTEGER REFERENCES locations(id),starts_on TEXT NOT NULL,amount INTEGER NOT NULL CHECK(amount>=0),unit_minutes INTEGER NOT NULL CHECK(unit_minutes IN (30,60)));
+ CREATE TABLE wage_adjustments(id INTEGER PRIMARY KEY,trainer_id INTEGER REFERENCES trainers(id),month TEXT NOT NULL,location_id INTEGER REFERENCES locations(id),amount INTEGER NOT NULL,reason TEXT NOT NULL,actor_id INTEGER REFERENCES users(id));
+ CREATE TABLE wage_settlements(id INTEGER PRIMARY KEY,trainer_id INTEGER REFERENCES trainers(id),month TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('approved','paid')),amount INTEGER NOT NULL,items_json TEXT NOT NULL,paid_on TEXT,actor_id INTEGER REFERENCES users(id),created_at TEXT NOT NULL,UNIQUE(trainer_id,month));
+ CREATE TABLE cost_categories(id INTEGER PRIMARY KEY,name TEXT NOT NULL UNIQUE);
+ CREATE TABLE business_costs(id INTEGER PRIMARY KEY,category_id INTEGER REFERENCES cost_categories(id),location_id INTEGER REFERENCES locations(id),amount INTEGER NOT NULL CHECK(amount>=0),date TEXT NOT NULL,label TEXT NOT NULL,recurrence TEXT NOT NULL DEFAULT 'none',ends_on TEXT,kind TEXT NOT NULL CHECK(kind IN ('operating','vat','income_tax','social')),actor_id INTEGER REFERENCES users(id),created_at TEXT NOT NULL);
+ CREATE TABLE rent_rules(id INTEGER PRIMARY KEY,location_id INTEGER REFERENCES locations(id),starts_on TEXT NOT NULL,amount_per_hour INTEGER NOT NULL CHECK(amount_per_hour>=0),minimum_minutes INTEGER NOT NULL CHECK(minimum_minutes>=0),cleaning INTEGER NOT NULL CHECK(cleaning>=0),fixed_monthly INTEGER NOT NULL CHECK(fixed_monthly>=0));
+ CREATE TABLE report_snapshots(id INTEGER PRIMARY KEY,month TEXT NOT NULL,revision INTEGER NOT NULL,payload_json TEXT NOT NULL,reason TEXT NOT NULL,actor_id INTEGER REFERENCES users(id),created_at TEXT NOT NULL,UNIQUE(month,revision));`);
+ for(const table of ['trainer_contracts','trainer_availability','wage_rates','wage_adjustments','wage_settlements','cost_categories','business_costs','rent_rules','report_snapshots']){const cols=db.prepare('PRAGMA table_info('+table+')').all().map(c=>c.name);replaceAuditTriggers(db,table,cols,table==='trainer_contracts'?['trainer_id']:['id']);}
+ replaceAuditTriggers(db,'lesson_completion',['session_id','completed','actor_id','reason','updated_at','actual_minutes'],['session_id']);
+ db.exec("CREATE TRIGGER report_snapshot_no_update BEFORE UPDATE ON report_snapshots BEGIN SELECT RAISE(ABORT,'Snapshot raportu jest niezmienny.'); END; CREATE TRIGGER report_snapshot_no_delete BEFORE DELETE ON report_snapshots BEGIN SELECT RAISE(ABORT,'Snapshot raportu jest niezmienny.'); END;");
+ if(db.prepare('PRAGMA foreign_key_check').all().length)throw Error('Migracja narusza powiązania danych.');
+ db.prepare('INSERT INTO schema_migrations VALUES(11,?,?)').run('Trainer settlements, availability and business reporting',new Date().toISOString());db.exec('COMMIT');
+ }catch(e){db.exec('ROLLBACK');throw e;}
+}
+
+export function migrateDirectoryOperations(db){
+ if(db.prepare('SELECT version FROM schema_migrations WHERE version=12').get())return;
+ db.exec('BEGIN IMMEDIATE');try{
+  db.exec(`CREATE TABLE athlete_merges(source_id INTEGER PRIMARY KEY,target_id INTEGER NOT NULL REFERENCES athletes(id),source_json TEXT NOT NULL,reason TEXT NOT NULL,actor_id INTEGER REFERENCES users(id),created_at TEXT NOT NULL);`);
+  replaceAuditTriggers(db,'athlete_merges',['source_id','target_id','source_json','reason','actor_id','created_at'],['source_id']);
+  db.prepare('INSERT INTO schema_migrations VALUES(12,?,?)').run('Controlled athlete record merges',new Date().toISOString());db.exec('COMMIT');
+ }catch(e){db.exec('ROLLBACK');throw e;}
+}

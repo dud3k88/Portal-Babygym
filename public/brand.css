@@ -133,3 +133,11 @@ select:not([multiple]):not([size]), select[size="1"] {
 .participation-history { margin-top: 16px; }
 .participation-history summary { cursor: pointer; color: var(--accent); }
 .participation-history p { overflow-wrap: anywhere; }
+/* Keep every module reachable when the navigation exceeds the viewport. */
+@media (min-width: 901px) {
+  .sidebar { overflow-y: auto; }
+  .sidebar > * { flex-shrink: 0; }
+}
+#operation-form, #bank-mapping { display: grid; gap: 14px; }
+#business-actions, #library-actions { flex-wrap: wrap; }
+#business-records, #finance-ledger, #library-content { overflow-wrap: anywhere; }

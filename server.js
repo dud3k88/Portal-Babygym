@@ -1,7 +1,16 @@
+import {createDirectoryOperations,nextAthleteId} from './directory-operations.js';
+import {createMembershipOperations} from './membership-operations.js';
+import { createBusiness } from './business.js';
+import {createExchange} from './exchange.js';
+import { pdf, workbook, csv, parseWorkbook } from './documents.js';
+import { createMethodology } from './methodology.js';
+import { createWorkspace, notifyChild } from './workspace.js';
+import { createFinance } from './finance.js';
+import { createCalendar } from './operations.js';
 import { createAdmissions } from './admissions.js';
 import { createUserService } from './users.js';
 import http from 'node:http';
-import { migrateFoundations, migrateTrainerAccess, migrateAccountSecurity, migrateSeasons, migrateParticipation, migrateAdmissions } from './migrations.js';
+import { migrateFoundations, migrateTrainerAccess, migrateAccountSecurity, migrateSeasons, migrateParticipation, migrateAdmissions, migrateOperations, migrateFinance, migrateWorkspace, migrateMethodology, migrateBusiness, migrateDirectoryOperations } from './migrations.js';
 import { createSeasonService } from './seasons.js';
 import { createParticipation, isCurrentMember, membershipDTO, nextMonthStart } from './participation.js';
 import { createGuardians } from './guardians.js';
@@ -92,6 +101,12 @@ migrateAccountSecurity(db);
 migrateSeasons(db);
 migrateParticipation(db);
 migrateAdmissions(db);
+migrateOperations(db);
+migrateFinance(db);
+migrateWorkspace(db);
+migrateMethodology(db);
+migrateBusiness(db);
+migrateDirectoryOperations(db);
 const participation=createParticipation(db);
 const seasonService=createSeasonService(db);
 auth.validateSecurity();
@@ -100,6 +115,15 @@ const trainerService=createTrainerService(db,auth);
 const userService=createUserService(db,auth);
 const admissions=createAdmissions(db,{sessions:sessionsWithStatus,quote,saveEnrollment,seasonService});
 admissions.bootstrap();
+const calendarService=createCalendar(db,{sessions:sessionsWithStatus,guardians,chargedTotals,reconcileExclusions,admissions});
+calendarService.syncAssignments();
+const financeService=createFinance(db,{sessions:sessionsWithStatus});
+const workspaceService=createWorkspace(db,guardians);
+const methodology=createMethodology(db,guardians,calendarService);
+const business=createBusiness(db,{sessions:sessionsWithStatus});
+const exchange=createExchange(db,financeService,business);
+const directoryOperations=createDirectoryOperations(db);
+const membershipOperations=createMembershipOperations(db,{chargedTotals,reconcileExclusions,saveEnrollment,admissions,finance:financeService,sessions:sessionsWithStatus,seasonService,participation});
 function chargedTotals() {
  const active=new Map(sessionsWithStatus().filter(s=>!s.excluded).map(s=>[s.id,s]));
  const charges=new Map(all('SELECT id,group_id,athlete_id FROM enrollments').map(charge=>[charge.id,charge]));
@@ -143,8 +167,13 @@ function trainerIds(value=[]) {
  });
 }
 function assignTrainers(groupId,ids) {
+ calendarService.syncAssignments();
  db.prepare('DELETE FROM group_trainers WHERE group_id=?').run(groupId);
  for(const id of ids) db.prepare('INSERT INTO group_trainers VALUES(?,?)').run(groupId,id);
+ for(const session of all('SELECT id FROM sessions WHERE group_id=? AND starts_at>=?',groupId,warsawNow())) {
+  db.prepare('DELETE FROM lesson_trainers WHERE session_id=?').run(session.id);
+  for(const id of ids)db.prepare('INSERT INTO lesson_trainers VALUES(?,?)').run(session.id,id);
+ }
 }
 function quote(b) {
  const g = group(b.group_id);
@@ -152,12 +181,12 @@ function quote(b) {
  if (locationById(g.location_id).status !== 'active') throw Error('Zapisy w tej placówce są zamknięte.');
  const joinedAt=warsawNow();
  const month=enrollmentMonth(b.month,joinedAt);
- const sessions = sessionsWithStatus().filter(s=>s.group_id===g.id&&s.starts_at.startsWith(month)&&!s.excluded);
+ const sessions = sessionsWithStatus().filter(s=>s.group_id===g.id&&s.starts_at.startsWith(month)&&!s.excluded).map(s=>({...s,price:financeService.unitPrice(g.id,b.athlete_id||-1,s)}));
  const trial = b.trial_id ? Number(b.trial_id) : null;
  if (trial && !g.trials) throw Error('Próby nie są dostępne w tej grupie.');
  const result = calculateCharge(sessions, joinedAt, trial, g.trial_price);
  if (!result.count) throw Error('Brak przyszłych zajęć w wybranym miesiącu.');
- return { ...result, group:g, trial, joinedAt, month };
+ return { ...result, group:g, trial, joinedAt, month,terms:sessions.filter(s=>s.starts_at>=joinedAt) };
 }
 function athleteById(id,user) {
  const athlete=db.prepare('SELECT * FROM athletes WHERE id=?').get(Number(id));
@@ -169,7 +198,7 @@ function stateFor(user) {
  const admin=user.role==='admin';
  const athletes=admin?all('SELECT * FROM athletes ORDER BY name'):all('SELECT id,parent_id,name,birth_date,created_at FROM athletes WHERE parent_id=? OR id IN (SELECT athlete_id FROM athlete_guardians WHERE user_id=?) ORDER BY name',user.id,user.id);
  const ids=new Set(athletes.map(a=>a.id));
- const enrollments=all(`SELECT e.*, a.name AS child, g.name AS group_name, g.location, e.amount + COALESCE((SELECT SUM(a.amount) FROM adjustments a WHERE a.enrollment_id=e.id),0) AS balance FROM enrollments e JOIN groups g ON g.id=e.group_id JOIN athletes a ON a.id=e.athlete_id ORDER BY e.id DESC`).filter(e=>admin||ids.has(e.athlete_id));
+ const enrollments=all(`SELECT e.*, a.name AS child, g.name AS group_name, g.location, e.amount + COALESCE((SELECT SUM(a.amount) FROM adjustments a WHERE a.enrollment_id=e.id),0)-COALESCE((SELECT SUM(pa.amount) FROM payment_allocations pa WHERE pa.enrollment_id=e.id),0) AS balance FROM enrollments e JOIN groups g ON g.id=e.group_id JOIN athletes a ON a.id=e.athlete_id ORDER BY e.id DESC`).filter(e=>admin||ids.has(e.athlete_id));
  const enrollmentIds=new Set(enrollments.map(e=>e.id));
  const waiting=all('SELECT * FROM waiting_list ORDER BY id').filter(entry=>admin||ids.has(entry.athlete_id));
  const ownGroupIds=new Set(all('SELECT * FROM memberships').filter(m=>ids.has(m.athlete_id)).map(m=>m.group_id));
@@ -182,7 +211,7 @@ function stateFor(user) {
  const visibleLocations=new Set(visibleGroups.map(g=>g.location_id));
  const guardianLinks=guardians.links().filter(link=>admin||ids.has(link.athlete_id));
  const parentIds=new Set([user.id,...guardianLinks.map(link=>link.user_id)]);
- return {user,waiting_list:waiting.map(entry=>({...entry,position:entry.status==='waiting'?db.prepare("SELECT COUNT(*) AS n FROM waiting_list WHERE group_id=? AND status='waiting' AND id<=?").get(entry.group_id,entry.id).n:null})),admission_settings:admissions.settings(),trial_decisions:all('SELECT t.*,e.athlete_id,e.group_id,e.trial_id FROM trial_decisions t JOIN enrollments e ON e.id=t.enrollment_id').filter(entry=>admin||ids.has(entry.athlete_id)),withdrawal_ends_at:nextMonthStart(),seasons:all('SELECT * FROM seasons ORDER BY start_date DESC').filter(season=>admin||visibleGroups.some(group=>group.season_id===season.id)),athletes,guardian_links:guardianLinks,guardian_invitations:all('SELECT id,athlete_id,email,invited_by,expires_at FROM guardian_invitations WHERE expires_at>?',Date.now()).filter(invitation=>admin||ids.has(invitation.athlete_id)),parents:all("SELECT id,name,email,phone,access_status,password_hash IS NOT NULL AS active FROM users WHERE role='parent' ORDER BY name").filter(parent=>admin||parentIds.has(parent.id)),memberships:all('SELECT * FROM memberships').filter(m=>admin||ids.has(m.athlete_id)).map(m=>membershipDTO(m)),membership_periods:all('SELECT * FROM membership_periods ORDER BY id DESC').filter(period=>admin||ids.has(period.athlete_id)),locations:admin?all('SELECT * FROM locations ORDER BY name'):all('SELECT id,name,status FROM locations ORDER BY name').filter(l=>availableLocations.has(l.id)||visibleLocations.has(l.id)),trainer_notes:admin?all('SELECT * FROM trainer_notes'):[],trainers:admin?all('SELECT t.*,u.password_hash IS NOT NULL AS account_active FROM trainers t LEFT JOIN users u ON u.id=t.user_id ORDER BY t.name'):all('SELECT id,name FROM trainers ORDER BY name').filter(t=>trainerIds.has(t.id)),group_trainers:trainerLinks,logo:existsSync(logoPath)?'/logo?v='+Date.now():null,groups:visibleGroups.map(group=>({...group,reserved_count:admissions.reserved(group.id),registration_available:availableLocations.has(group.location_id)&&seasonService.available(group)})),sessions:sessionsWithStatus().filter(s=>admin||ownGroupIds.has(s.group_id)||(visibleIds.has(s.group_id)&&s.starts_at>=warsawNow())),exclusions:admin?all('SELECT * FROM exclusions ORDER BY start_date'):[],enrollments,adjustments:all('SELECT * FROM adjustments ORDER BY id DESC').filter(a=>admin||enrollmentIds.has(a.enrollment_id)),now:warsawNow()};
+ return {user,finance:financeService.view(user,[...ids]),waiting_list:waiting.map(entry=>({...entry,position:entry.status==='waiting'?db.prepare("SELECT COUNT(*) AS n FROM waiting_list WHERE group_id=? AND status='waiting' AND id<=?").get(entry.group_id,entry.id).n:null})),admission_settings:admissions.settings(),trial_decisions:all('SELECT t.*,e.athlete_id,e.group_id,e.trial_id FROM trial_decisions t JOIN enrollments e ON e.id=t.enrollment_id').filter(entry=>admin||ids.has(entry.athlete_id)),withdrawal_ends_at:nextMonthStart(),seasons:all('SELECT * FROM seasons ORDER BY start_date DESC').filter(season=>admin||visibleGroups.some(group=>group.season_id===season.id)),athletes,guardian_links:guardianLinks,guardian_invitations:all('SELECT id,athlete_id,email,invited_by,expires_at FROM guardian_invitations WHERE expires_at>?',Date.now()).filter(invitation=>admin||ids.has(invitation.athlete_id)),parents:all("SELECT id,name,email,phone,access_status,password_hash IS NOT NULL AS active FROM users WHERE role='parent' ORDER BY name").filter(parent=>admin||parentIds.has(parent.id)),memberships:all('SELECT * FROM memberships').filter(m=>admin||ids.has(m.athlete_id)).map(m=>membershipDTO(m)),membership_periods:all('SELECT * FROM membership_periods ORDER BY id DESC').filter(period=>admin||ids.has(period.athlete_id)),locations:admin?all('SELECT * FROM locations ORDER BY name'):all('SELECT id,name,status FROM locations ORDER BY name').filter(l=>availableLocations.has(l.id)||visibleLocations.has(l.id)),trainer_notes:admin?all('SELECT * FROM trainer_notes'):[],trainers:admin?all('SELECT t.*,u.password_hash IS NOT NULL AS account_active FROM trainers t LEFT JOIN users u ON u.id=t.user_id ORDER BY t.name'):all('SELECT id,name FROM trainers ORDER BY name').filter(t=>trainerIds.has(t.id)),group_trainers:trainerLinks,logo:existsSync(logoPath)?'/logo?v='+Date.now():null,groups:visibleGroups.map(group=>({...group,reserved_count:admissions.reserved(group.id),registration_available:availableLocations.has(group.location_id)&&seasonService.available(group)})),sessions:sessionsWithStatus().filter(s=>admin||ownGroupIds.has(s.group_id)||(visibleIds.has(s.group_id)&&s.starts_at>=warsawNow())),exclusions:admin?all('SELECT * FROM exclusions ORDER BY start_date'):[],enrollments,adjustments:all('SELECT * FROM adjustments ORDER BY id DESC').filter(a=>admin||enrollmentIds.has(a.enrollment_id)),now:warsawNow()};
 }
 async function readJSON(req) {
  if(!req.headers['content-type']?.startsWith('application/json')) throw Object.assign(Error('Wymagany format JSON.'),{status:415});
@@ -191,8 +220,9 @@ async function readJSON(req) {
 }
 function saveEnrollment(b,athlete,payerId=athlete.parent_id) {
  admissions.sync();
+ workspaceService.requirePolicies(athlete.id,payerId,[]);
  const parent=db.prepare('SELECT * FROM users WHERE id=?').get(payerId);
-     const q=quote(b.waitlist===true?{...b,trial_id:null}:b);
+     const q=quote({...b,athlete_id:athlete.id,...(b.waitlist===true?{trial_id:null}:{})});
      const member=db.prepare('SELECT * FROM memberships WHERE group_id=? AND athlete_id=?').get(q.group.id,athlete.id);
      const count=db.prepare("SELECT COUNT(*) AS n FROM memberships WHERE group_id=? AND status IN ('active','trial') AND (ends_at IS NULL OR ends_at>academy_now())").get(q.group.id).n;
      const ownOffer=admissions.offerFor(q.group.id,athlete.id,b.offer_id);
@@ -213,9 +243,10 @@ function saveEnrollment(b,athlete,payerId=athlete.parent_id) {
       db.prepare("INSERT INTO memberships(group_id,athlete_id,status,joined_at,trial_id) VALUES(?,?,?,?,?) ON CONFLICT(group_id,athlete_id) DO UPDATE SET status=excluded.status,joined_at=excluded.joined_at,trial_id=excluded.trial_id,ends_at=NULL,withdrawal_reason=''").run(q.group.id,athlete.id,q.trial?'trial':'active',q.joinedAt,q.trial);
       participation.recordStart(q.group.id,athlete.id,q.trial?'trial':'active',q.joinedAt);
      }
-     for(const term of sessionsWithStatus().filter(s=>s.group_id===q.group.id&&s.starts_at.startsWith(q.month)&&s.starts_at>=q.joinedAt&&!s.cancelled&&(!q.trial||s.id===q.trial))) db.prepare('INSERT INTO enrollment_sessions VALUES(?,?,?)').run(id,term.id,q.trial?q.amount:term.price);
+     for(const term of sessionsWithStatus().filter(s=>s.group_id===q.group.id&&s.starts_at.startsWith(q.month)&&s.starts_at>=q.joinedAt&&!s.cancelled&&(!q.trial||s.id===q.trial))) db.prepare('INSERT INTO enrollment_sessions VALUES(?,?,?)').run(id,term.id,q.trial?q.amount:financeService.unitPrice(q.group.id,athlete.id,term));
 
  if(q.trial)admissions.startTrial(id);
+ notifyChild(db,athlete.id,'enrollment:'+id,'Potwierdzono zapis dziecka do grupy '+q.group.name);
  return {id,amount:q.amount};
 }
 
@@ -227,7 +258,7 @@ const server = http.createServer(withRequestContext(async (req,res) => {
   res.setHeader('Cache-Control','no-store');
   res.setHeader('X-Content-Type-Options','nosniff');
   if(req.method==='POST'&&req.headers.origin&&req.headers.origin!==`http://${req.headers.host}`&&req.headers.origin!==`https://${req.headers.host}`) return send(403,{error:'Niedozwolone źródło żądania.'});
-  if(url.pathname.startsWith('/api/'))admissions.sync();
+  if(url.pathname.startsWith('/api/')){admissions.sync();financeService.rebalance();financeService.auto();}
   requestContext.getStore().actorId = auth.user(req)?.id ?? null;
   if(url.pathname.startsWith('/api/auth/')) return await auth.route(req,res,url.pathname,req.method==='POST'?await readJSON(req):null,send);
   if(req.method==='GET'&&url.pathname==='/api/public/catalog') {
@@ -236,10 +267,10 @@ const server = http.createServer(withRequestContext(async (req,res) => {
    const activeGroups = new Set(all("SELECT g.* FROM groups g JOIN locations l ON l.id=g.location_id WHERE l.status='active'").filter(g=>seasonService.available(g)).map(g=>g.id));
    const publicLinks=all('SELECT * FROM group_trainers').filter(link=>activeGroups.has(link.group_id));
    const publicTrainerIds=new Set(publicLinks.map(link=>link.trainer_id));
-   return send(200,{logo:existsSync(logoPath)?'/logo':null,locations:activeLocations,groups:all(`SELECT id,location_id,name,capacity,price,trial_price,trials,weekday,start_time,end_time,(SELECT COUNT(*) FROM memberships m WHERE m.group_id=groups.id AND m.status IN ('active','trial') AND (m.ends_at IS NULL OR m.ends_at>academy_now())) AS member_count FROM groups`).filter(g=>activeGroups.has(g.id)).map(g=>({...g,reserved_count:admissions.reserved(g.id)})),trainers:all('SELECT id,name FROM trainers ORDER BY name').filter(trainer=>publicTrainerIds.has(trainer.id)),group_trainers:publicLinks,sessions:sessionsWithStatus().filter(s=>activeGroups.has(s.group_id)&&!s.cancelled&&s.starts_at>=now).map(s=>({id:s.id,group_id:s.group_id,starts_at:s.starts_at,ends_at:s.ends_at,excluded:s.excluded})),now});
+   return send(200,{documents:workspaceService.policies(),logo:existsSync(logoPath)?'/logo':null,locations:activeLocations,groups:all(`SELECT id,location_id,name,capacity,price,trial_price,trials,weekday,start_time,end_time,(SELECT COUNT(*) FROM memberships m WHERE m.group_id=groups.id AND m.status IN ('active','trial') AND (m.ends_at IS NULL OR m.ends_at>academy_now())) AS member_count FROM groups`).filter(g=>activeGroups.has(g.id)).map(g=>({...g,reserved_count:admissions.reserved(g.id)})),trainers:all('SELECT id,name FROM trainers ORDER BY name').filter(trainer=>publicTrainerIds.has(trainer.id)),group_trainers:publicLinks,sessions:sessionsWithStatus().filter(s=>activeGroups.has(s.group_id)&&!s.cancelled&&s.starts_at>=now).map(s=>({id:s.id,group_id:s.group_id,starts_at:s.starts_at,ends_at:s.ends_at,excluded:s.excluded})),now});
   }
   if(req.method==='POST'&&url.pathname==='/api/public/quote') {
-   const q=quote(await readJSON(req));return send(200,{amount:q.amount,count:q.count});
+   const body=await readJSON(req);delete body.athlete_id;const q=quote(body);return send(200,{amount:q.amount,count:q.count});
   }
   if(req.method==='POST'&&url.pathname==='/api/public/enroll') {
    const key=req.socket.remoteAddress,now=Date.now(),attempt=signupAttempts.get(key);
@@ -256,6 +287,7 @@ const server = http.createServer(withRequestContext(async (req,res) => {
    const birthDate=b.birth_date||null;
    if(birthDate&&(!validDate(birthDate)||birthDate>warsawNow().slice(0,10)))throw Error('Podaj poprawną datę urodzenia dziecka.');
    if(db.prepare('SELECT id FROM users WHERE email=?').get(email))return send(409,{error:'Konto z tym adresem email już istnieje. Zaloguj się w panelu rodzica, aby zapisać dziecko. Nie twórz drugiego konta.'});
+   workspaceService.requirePolicies(null,null,b.document_acceptances);
    quote(b);
    const hash=await passwordHash(b.password);
    db.exec('BEGIN IMMEDIATE');
@@ -263,7 +295,8 @@ const server = http.createServer(withRequestContext(async (req,res) => {
    try {
     if(db.prepare('SELECT id FROM users WHERE email=?').get(email))throw Error('Konto z tym adresem już istnieje. Zaloguj się w panelu rodzica.');
     parentId=Number(db.prepare("INSERT INTO users(name,email,phone,role,password_hash,created_at) VALUES(?,?,?,'parent',?,?)").run(parentName,email,phone,hash,warsawNow()).lastInsertRowid);
-    const id=Number(db.prepare('INSERT INTO athletes(parent_id,name,birth_date,created_at) VALUES(?,?,?,?)').run(parentId,childName,birthDate,warsawNow()).lastInsertRowid);
+    const id=Number(db.prepare('INSERT INTO athletes(id,parent_id,name,birth_date,created_at) VALUES(?,?,?,?,?)').run(nextAthleteId(db),parentId,childName,birthDate,warsawNow()).lastInsertRowid);
+    workspaceService.recordPublic(id,parentId,b.document_acceptances);
     result=saveEnrollment(b,{id,parent_id:parentId,name:childName});
     db.exec('COMMIT');
    }catch(error){db.exec('ROLLBACK');throw error;}
@@ -274,10 +307,40 @@ const server = http.createServer(withRequestContext(async (req,res) => {
   if(url.pathname.startsWith('/api/')) {
    if(!user) return send(401,{error:'Zaloguj się, aby kontynuować.'});
    if (!['admin','trainer','parent'].includes(user.role)) return send(403,{error:'Brak dostępu dla tej roli.'});
-   const parentPaths=['/api/state','/api/athletes','/api/athletes/update','/api/quote','/api/enrollments','/api/memberships/withdraw','/api/memberships/cancel-withdrawal','/api/waiting/join','/api/waiting/cancel','/api/waiting/accept','/api/trials/quote','/api/trials/convert',...['invite','preview','accept','revoke','cancel'].map(action=>'/api/guardians/'+action)];
-   const allowedPaths=user.role==='trainer'?['/api/state','/api/trainer-notes']:parentPaths;
+   const calendarPaths=['/api/library','/api/library/file','/api/library/pdf','/api/library/card','/api/library/stamps','/api/workspace','/api/workspace/thread','/api/workspace/message','/api/workspace/read','/api/workspace/consent','/api/workspace/issue','/api/calendar','/api/calendar/detail','/api/calendar/absence','/api/calendar/mark','/api/calendar/complete'];
+   const parentPaths=[...calendarPaths,'/api/state','/api/athletes','/api/athletes/update','/api/quote','/api/enrollments','/api/memberships/withdraw','/api/memberships/cancel-withdrawal','/api/waiting/join','/api/waiting/cancel','/api/waiting/accept','/api/trials/quote','/api/trials/convert',...['invite','preview','accept','revoke','cancel'].map(action=>'/api/guardians/'+action)];
+   const allowedPaths=user.role==='trainer'?['/api/state','/api/trainer-notes','/api/business','/api/business/wages','/api/business/availability','/api/library/upload','/api/library/plan','/api/library/assess',...calendarPaths]:parentPaths;
    if(user.role!=='admin'&&!allowedPaths.includes(url.pathname)) return send(403,{error:'Ta operacja wymaga konta administratora.'});
   }
+  if(req.method==='GET'&&url.pathname==='/api/athletes/duplicates')return send(200,directoryOperations.duplicates(user));
+  if(req.method==='GET'&&url.pathname==='/api/export'){
+   const kind=url.searchParams.get('kind'),format=url.searchParams.get('format')||'csv',rows=exchange.rows(kind,url.searchParams,user);
+   if(!['csv','xlsx'].includes(format))throw Error('Wybierz CSV lub XLSX.');const names={id:'ID',name:'Imię i nazwisko',birth_date:'Data urodzenia',parent:'Rodzic',email:'Email',phone:'Telefon',child:'Zawodnik',amount:'Kwota (grosze)',reference:'Identyfikator wpłaty',paid_on:'Data wpływu',month:'Miesiąc',group_name:'Grupa',location:'Lokalizacja',balance:'Do zapłaty (grosze)',trainer:'Trener',minutes:'Minuty',metric:'Wskaźnik',value:'Wartość'};
+   const keys=[...new Set(rows.flatMap(row=>Object.keys(row)))],columns=(keys.length?keys:['id']).map(key=>({key,label:names[key]||key}));const output=format==='csv'?csv(columns,rows):await workbook(kind,columns,rows);
+   res.writeHead(200,{'Content-Type':format==='csv'?'text/csv; charset=utf-8':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':'attachment; filename="evolution-'+kind+'.'+format+'"'});return res.end(output);
+  }
+  if(req.method==='POST'&&url.pathname==='/api/import/preview'){
+   const chunks=[];let size=0;for await(const chunk of req){size+=chunk.length;if(size>5*1024*1024)throw Error('Maksymalnie 5 MB.');chunks.push(chunk);}const table=await parseWorkbook(Buffer.concat(chunks),url.searchParams.get('type'));
+   const current=auth.user(req);if(current?.role!=='admin')return send(403,{error:'Wymagane konto administratora.'});return send(200,exchange.preview(table));
+  }
+  if(req.method==='GET'&&url.pathname==='/api/business/snapshot')return send(200,business.snapshotRead(Number(url.searchParams.get('id')),user));
+  if(req.method==='GET'&&url.pathname==='/api/business')return send(200,business.state(user));
+  if(req.method==='GET'&&url.pathname==='/api/business/wages')return send(200,business.wages(Number(url.searchParams.get('trainer_id')),url.searchParams.get('month'),user));
+  if(req.method==='GET'&&url.pathname==='/api/business/report')return send(200,business.report({month:url.searchParams.get('month'),location_id:Number(url.searchParams.get('location_id'))||null},user));
+  if(req.method==='GET'&&url.pathname==='/api/library')return send(200,methodology.state(user));
+  if(req.method==='GET'&&url.pathname==='/api/library/pdf'){
+   const data=methodology.state(user),id=Number(url.searchParams.get('id')),type=url.searchParams.get('type');let output;
+   if(type==='plan'){const plan=data.plans.find(p=>p.id===id);if(!plan)return send(404,{error:'Nie znaleziono konspektu.'});output=await pdf(plan.title,[{title:'Rozgrzewka',body:plan.warmup},{title:'Część główna',body:plan.main_part},{title:'Zabawy',body:plan.games},{title:'Zakończenie',body:plan.ending},{title:'Sprzęt i czas',body:plan.equipment+' · '+plan.minutes+' min'}]);}
+   else {const child=data.children.find(a=>a.id===id);if(!child)return send(404,{error:'Nie znaleziono zawodnika.'});const stamps=methodology.stamps(id,user);if(type==='card')output=await pdf('Karta Przygody — '+child.name,[{title:'Bohater',body:({fox:'Lis',giraffe:'Żyrafa',hare:'Zając',turtle:'Żółw',seal:'Foka',monkey:'Małpka'})[data.cards.find(c=>c.athlete_id===id)?.hero||'fox']}],{stamps});else if(type==='certificate'){if(!stamps.length)throw Error('Dyplom uczestnictwa wymaga potwierdzonej obecności.');output=await pdf('Dyplom uczestnictwa',[{title:child.name,body:'Za udział w zajęciach Evolution Academy. Potwierdzone obecności: '+stamps.length},{title:'Data',body:warsawNow().slice(0,10)}]);}else return send(404,{error:'Nieznany dokument.'});}
+   res.writeHead(200,{'Content-Type':'application/pdf','Content-Disposition':'attachment; filename="evolution-academy.pdf"'});return res.end(output);
+  }
+  if(req.method==='GET'&&url.pathname==='/api/library/stamps')return send(200,{items:methodology.stamps(Number(url.searchParams.get('athlete_id')),user)});
+  if(req.method==='GET'&&url.pathname==='/api/library/file'){const asset=methodology.asset(Number(url.searchParams.get('id')),user);res.writeHead(200,{'Content-Type':asset.mime,'Content-Disposition':'inline','Content-Security-Policy':"sandbox; default-src 'none'",'X-Content-Type-Options':'nosniff'});return res.end(Buffer.from(asset.content));}
+  if(req.method==='POST'&&url.pathname==='/api/library/upload') {const chunks=[];let size=0;for await(const chunk of req){size+=chunk.length;if(size>20*1024*1024)throw Error('Maksymalny rozmiar: 20 MB.');chunks.push(chunk);}const current=auth.user(req);if(!current)return send(401,{error:'Zaloguj się ponownie.'});const b=Object.fromEntries(url.searchParams);for(const key of ['group_id','program_id'])if(b[key])b[key]=Number(b[key]);return send(201,methodology.upload(b,Buffer.concat(chunks),current));}
+  if(req.method==='GET'&&url.pathname==='/api/workspace')return send(200,workspaceService.state(user));
+  if(req.method==='GET'&&url.pathname==='/api/workspace/thread')return send(200,workspaceService.thread(Number(url.searchParams.get('id')),user));
+  if(req.method==='GET'&&url.pathname==='/api/calendar')return send(200,calendarService.list(user,url.searchParams));
+  if(req.method==='GET'&&url.pathname==='/api/calendar/detail')return send(200,calendarService.detail(user,Number(url.searchParams.get('id'))));
   if(req.method==='GET'&&url.pathname==='/api/users')return send(200,userService.list(url.searchParams));
   if(req.method==='GET'&&url.pathname==='/api/audit') {
    const before=url.searchParams.get('before');
@@ -305,6 +368,16 @@ const server = http.createServer(withRequestContext(async (req,res) => {
   }
   if (req.method === 'POST' && url.pathname.startsWith('/api/')) {
    const b=await readJSON(req);
+   if(!auth.user(req))return send(401,{error:'Sesja została zakończona. Zaloguj się ponownie.'});
+   if(url.pathname==='/api/athletes/merge')return send(200,directoryOperations.merge(b,user));
+   if(url.pathname==='/api/import/athletes/check')return send(200,{rows:directoryOperations.checkRows(b.rows)});
+   if(url.pathname==='/api/import/athletes')return send(200,directoryOperations.importAthletes(b,user));
+   if(url.pathname==='/api/memberships/operate')return send(200,membershipOperations.run(b,user));
+   if(url.pathname==='/api/import/bank')return send(200,exchange.bank(b,user));
+   if(url.pathname.startsWith('/api/business/')){const action=url.pathname.split('/').at(-1);if(!['contract','availability','approveAvailability','rate','adjustment','settle','paid','category','cost','rent','snapshot'].includes(action))throw Error('Nieznana operacja.');return send(200,business[action](b,user));}
+   if(url.pathname.startsWith('/api/library/')){const action=url.pathname.split('/').at(-1);if(!['program','skill','assign','plan','assess','card'].includes(action))throw Error('Nieznana operacja.');return send(200,methodology[action](b,user));}
+   if(url.pathname.startsWith('/api/workspace/')){const action=url.pathname.split('/').at(-1);if(!['savePolicy','consent','message','status','equipmentSave','move','issue','read'].includes(action))throw Error('Nieznana operacja.');const current=auth.user(req);if(!current)return send(401,{error:'Zaloguj się ponownie.'});return send(200,workspaceService[action](b,current));}
+   if(['/api/calendar/mark','/api/calendar/absence','/api/calendar/complete','/api/calendar/edit'].includes(url.pathname)){const current=auth.user(req);if(!current)return send(401,{error:'Zaloguj się ponownie.'});calendarService.syncAssignments();return send(200,calendarService[url.pathname.split('/').at(-1)](current,b));}
    if(url.pathname==='/api/users'||url.pathname.startsWith('/api/users/')) {
     const actor=auth.user(req);
     if(actor?.role!=='admin')return send(403,{error:'Wymagane aktywne konto administratora.'});
@@ -314,6 +387,7 @@ const server = http.createServer(withRequestContext(async (req,res) => {
     if(url.pathname==='/api/users/invite')return send(200,userService.invite(b));
    }
    if(['/api/memberships/withdraw','/api/memberships/cancel-withdrawal'].includes(url.pathname))return send(200,participation.change(b,athleteById(b.athlete_id,user),url.pathname.endsWith('/cancel-withdrawal')));
+   if(url.pathname.startsWith('/api/finance/')){const action=url.pathname.split('/').at(-1);if(!['payment','allocate','refund','refundPaid','price','discount','generate','configure','feeRule','fee'].includes(action))throw Error('Nieznana operacja finansowa.');return send(200,financeService[action](b,user));}
    if(url.pathname==='/api/admissions/settings')return send(200,admissions.saveSettings(b));
    if(['/api/waiting/join','/api/waiting/cancel','/api/waiting/accept','/api/trials/quote','/api/trials/convert'].includes(url.pathname)) {
     const current=auth.user(req);
@@ -380,7 +454,7 @@ const server = http.createServer(withRequestContext(async (req,res) => {
       db.exec('COMMIT');return send(200,{id:existing.id});
      }catch(error){db.exec('ROLLBACK');throw error;}
     }
-    const id=Number(db.prepare('INSERT INTO athletes(parent_id,name,birth_date,notes,created_at) VALUES(?,?,?,?,?)').run(parentId,name,birthDate,notes,warsawNow()).lastInsertRowid);
+    const id=Number(db.prepare('INSERT INTO athletes(id,parent_id,name,birth_date,notes,created_at) VALUES(?,?,?,?,?,?)').run(nextAthleteId(db),parentId,name,birthDate,notes,warsawNow()).lastInsertRowid);
     return send(201,{id});
    }
    if(url.pathname==='/api/locations' || url.pathname==='/api/locations/update') {
@@ -506,7 +580,7 @@ const server = http.createServer(withRequestContext(async (req,res) => {
      admissions.sync();db.exec('COMMIT');return send(200,{ok:true});
     }catch(e){db.exec('ROLLBACK');throw e;}
    }
-   if(url.pathname==='/api/quote') { const q=quote(b); return send(200,{amount:q.amount,count:q.count}); }
+   if(url.pathname==='/api/quote') { if(b.athlete_id)athleteById(b.athlete_id,user);const q=quote(b); return send(200,{amount:q.amount,count:q.count}); }
    if(url.pathname==='/api/enrollments') {
     const athlete=athleteById(b.athlete_id,user);
     db.exec('BEGIN IMMEDIATE');

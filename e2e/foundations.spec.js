@@ -75,10 +75,20 @@ test('placówka, publiczny zapis, blokada rodzica, dziennik i mobilny panel',asy
   await page.locator('#audit-list details').first().locator('summary').click();
   await expect(page.locator('#audit-list details[open]')).toContainText('Status');
   await page.setViewportSize({width:390,height:844});
-  for(const view of ['audit','locations','athletes']) {
+  for(const view of ['audit','locations','athletes','finance','calendar','messages','policies','equipment','library','business']) {
    await page.goto(origin+'/#'+view);
-   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
+   await expect(page.locator(view==='calendar'?'#calendar-page':'#'+view)).toBeVisible();
+   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),view).toBeTruthy();
   }
+  await page.locator('[data-business-action=category]').click();
+  await page.locator('#operation-form [name=name]').fill('Usługi testowe');
+  await page.locator('#operation-form [type=submit]').click();
+  await page.locator('[data-business-action=cost]').click();
+  await page.locator('#operation-form [name=amount]').fill('100');
+  await page.locator('#operation-form [name=label]').fill('Koszt testowy');
+  await page.locator('#operation-form [type=submit]').click();
+  await expect(page.locator('#business-records')).toContainText('Koszt testowy');
+  await expect(page.locator('#business-report')).toContainText('100,00');
   expect(errors).toEqual([]);
  }finally{await parentContext.close();}
 });

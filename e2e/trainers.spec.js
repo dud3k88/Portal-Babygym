@@ -43,7 +43,9 @@ test('administrator aktywuje konto trenera; własne grupy, notatka i blokada; li
   await expect(coachPage).toHaveURL(/#coach/);
   await expect(coachPage.locator('#coach-sessions')).toContainText('Liski');
   await expect(coachPage.locator('#coach-roster')).toContainText('123456789');
-  await expect(coachPage.locator('nav button:visible')).toHaveCount(1);
+  expect(await coachPage.locator('nav button:visible').evaluateAll(buttons=>buttons.map(b=>b.dataset.view).sort())).toEqual(['business','calendar','coach','equipment','library','messages']);
+  await expect(coachPage.locator('nav [data-view=billing]')).toBeHidden();
+  await expect(coachPage.locator('nav [data-view=users]')).toBeHidden();
   await expect(coachPage.locator('body')).not.toContainText('NIEWIDOCZNE DLA TRENERA');
   await coachPage.selectOption('#coach-group',String(group));
   await coachPage.locator('[data-coach-note]').click();await coachPage.locator('#coach-note-form textarea').fill('Ćwiczenia równowagi');await coachPage.locator('#coach-note-form [type=submit]').click();

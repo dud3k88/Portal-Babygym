@@ -8,7 +8,7 @@ export function isCurrentMember(member,now=warsawNow()) {
   return Boolean(member&&['active','trial'].includes(member.status)&&(!member.ends_at||member.ends_at>now));
 }
 export function membershipDTO(member,now=warsawNow()) {
-  return {...member,status:isCurrentMember(member,now)?member.status:'ended'};
+  return {...member,status:member.status==='suspended'?'suspended':isCurrentMember(member,now)?member.status:'ended'};
 }
 export function createParticipation(db) {
   function change(body,athlete,cancel=false) {

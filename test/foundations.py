@@ -116,7 +116,7 @@ with tempfile.TemporaryDirectory() as temp:
   for secret in ['password_hash','token_hash','test-parent-password',token]:assert secret not in dump
   with sqlite3.connect(dbpath) as db:
    assert db.execute('PRAGMA foreign_key_check').fetchall()==[]
-   assert [r[0] for r in db.execute('SELECT version FROM schema_migrations ORDER BY version')]==[1,2,3,4,5,6]
+   assert [r[0] for r in db.execute('SELECT version FROM schema_migrations ORDER BY version')]==list(range(1,13))
    for query in ['UPDATE audit_logs SET action="tamper"','DELETE FROM audit_logs']:
     try:db.execute(query);raise AssertionError('audit writable')
     except sqlite3.IntegrityError:db.rollback()

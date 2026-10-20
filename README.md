@@ -220,3 +220,7 @@ jeśli nie uczestniczy on nadal w innej jego grupie.
 Dokładne zasady, migracje i ograniczenia: [ETAP-3A.md](docs/ETAP-3A.md).
 Nowe testy: `python3 test/participation.py`. Kolejny zakres: próby i konwersja
 na zapis stały, lista rezerwowa oraz dalsze operacje uczestnictwa, potem obecności.
+
+## Zbiorcza rozbudowa bez operatorów zewnętrznych
+
+Zakres, instrukcja aktualizacji, reguły rozliczeń i pozostałe elementy specyfikacji: [docs/AKTUALIZACJA-ZBIORCZA.md](docs/AKTUALIZACJA-ZBIORCZA.md). Po pobraniu aktualizacji wymagane `npm ci` (generowanie PDF i XLSX).

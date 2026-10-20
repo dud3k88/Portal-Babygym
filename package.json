@@ -14,5 +14,14 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "pdfkit": "^0.17.2"
+  },
+  "overrides": {
+    "exceljs": {
+      "uuid": "11.1.1"
+    }
   }
 }

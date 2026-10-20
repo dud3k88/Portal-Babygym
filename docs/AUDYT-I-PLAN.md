@@ -1,3 +1,5 @@
+> Aktualny zakres po zbiorczej rozbudowie: [AKTUALIZACJA-ZBIORCZA.md](AKTUALIZACJA-ZBIORCZA.md). Poniższy audyt zachowuje historyczny stan początkowy.
+
 # Evolution Academy — audyt i plan rozbudowy
 
 Data: 20.10.2026. Punkt wyjścia: commit `da0170b`. Źródło wymagań:

@@ -1,3 +1,4 @@
+import { notifyChild } from './workspace.js';
 import { warsawNow, enrollmentMonth } from './billing.js';
 import { isCurrentMember } from './participation.js';
 export function warsawAt(epoch) {
@@ -55,7 +56,7 @@ export function createAdmissions(db,{sessions,quote,saveEnrollment,seasonService
     for(const entry of all("SELECT w.* FROM waiting_list w JOIN users u ON u.id=w.payer_id WHERE w.group_id=? AND w.status='waiting' AND u.access_status='active' ORDER BY w.id",g.id)) {
      if(isCurrentMember(member(g.id,entry.athlete_id))) {db.prepare("UPDATE waiting_list SET status='cancelled' WHERE id=?").run(entry.id);continue;}
      if(free<=0)break;
-     db.prepare("UPDATE waiting_list SET status='offered',expires_at=? WHERE id=?").run(Date.now()+settings().offer_hours*3600000,entry.id);free--;
+     db.prepare("UPDATE waiting_list SET status='offered',expires_at=? WHERE id=?").run(Date.now()+settings().offer_hours*3600000,entry.id);notifyChild(db,entry.athlete_id,'offer:'+entry.id+':'+Date.now(),'Wolne miejsce w grupie '+g.name+'. Sprawdź ofertę w panelu.');free--;
     }
    }
   });
@@ -98,7 +99,7 @@ export function createAdmissions(db,{sessions,quote,saveEnrollment,seasonService
   const ownOffer=offerFor(e.group_id,athlete.id,body.offer_id);
   if(!isCurrentMember(m)&&occupied(e.group_id)+reserved(e.group_id,ownOffer?.id)>=group(e.group_id).capacity)throw Error('Rezerwacja wygasła i nie ma wolnego miejsca. Dołącz do listy rezerwowej.');
   if(warsawNow()<e.trial_end)throw Error('Zapis stały potwierdzisz po zakończeniu zajęć próbnych.');
-  const q=quote({group_id:e.group_id,month:body.month});
+  const q=quote({group_id:e.group_id,month:body.month,athlete_id:athlete.id});
   return {...q,source:e};
  }
  function convert(body,athlete) {
@@ -113,7 +114,7 @@ export function createAdmissions(db,{sessions,quote,saveEnrollment,seasonService
    db.prepare('UPDATE membership_periods SET ends_at=CASE WHEN ends_at IS NULL OR ends_at>? THEN ? ELSE ends_at END WHERE id=(SELECT MAX(id) FROM membership_periods WHERE group_id=? AND athlete_id=?)').run(q.joinedAt,q.joinedAt,e.group_id,athlete.id);
    db.prepare("UPDATE memberships SET status='active',joined_at=?,ends_at=NULL,trial_id=NULL,withdrawal_reason='' WHERE group_id=? AND athlete_id=?").run(q.joinedAt,e.group_id,athlete.id);
    db.prepare("INSERT INTO membership_periods(group_id,athlete_id,status,starts_at) VALUES(?,?,'active',?)").run(e.group_id,athlete.id,q.joinedAt);
-   for(const term of future(q.group))db.prepare('INSERT INTO enrollment_sessions VALUES(?,?,?)').run(result,term.id,term.price);
+   for(const term of q.terms)db.prepare('INSERT INTO enrollment_sessions VALUES(?,?,?)').run(result,term.id,term.price);
    db.prepare("UPDATE trial_decisions SET status='converted',regular_enrollment_id=? WHERE enrollment_id=?").run(result,e.id);
    return {id:result,amount:q.amount};
   });
