@@ -1,4 +1,6 @@
 import http from 'node:http';
+import { migrateFoundations } from './migrations.js';
+import { configureAudit, withRequestContext, requestContext, recordAccess } from './audit.js';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { calculateCharge, warsawNow, enrollmentMonth } from './billing.js';
@@ -7,6 +9,8 @@ import { createAuth, emailAddress, passwordHash } from './auth.js';
 mkdirSync('data', { recursive: true });
 const logoPath = process.env.LOGO_PATH || 'data/logo';
 const db = new DatabaseSync(process.env.DB_PATH || 'data/evolution.sqlite');
+configureAudit(db);
+const legacyBackfillDone = Boolean(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'").get() && db.prepare('SELECT version FROM schema_migrations WHERE version=1').get());
 db.exec(`PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS groups(id INTEGER PRIMARY KEY, location TEXT NOT NULL, name TEXT NOT NULL, capacity INTEGER NOT NULL, price INTEGER NOT NULL, trial_price INTEGER NOT NULL, trials INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions(id INTEGER PRIMARY KEY, group_id INTEGER REFERENCES groups(id), starts_at TEXT NOT NULL, price INTEGER NOT NULL);
@@ -42,12 +46,13 @@ try {
 } catch(error){db.exec('ROLLBACK');throw error;}
 if(!all('PRAGMA table_info(sessions)').some(c=>c.name==='location_id')) db.exec('ALTER TABLE sessions ADD COLUMN location_id INTEGER REFERENCES locations(id)');
 db.exec('UPDATE sessions SET location_id=(SELECT location_id FROM groups WHERE groups.id=sessions.group_id) WHERE location_id IS NULL');
-const auth=createAuth(db);
+const auth=createAuth(db, (action,id)=>recordAccess(db,action,id));
 db.exec(`CREATE TABLE IF NOT EXISTS athletes(id INTEGER PRIMARY KEY, parent_id INTEGER NOT NULL REFERENCES users(id), name TEXT NOT NULL, birth_date TEXT, notes TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS memberships(group_id INTEGER NOT NULL REFERENCES groups(id), athlete_id INTEGER NOT NULL REFERENCES athletes(id), status TEXT NOT NULL DEFAULT 'active', joined_at TEXT NOT NULL, trial_id INTEGER REFERENCES sessions(id), PRIMARY KEY(group_id,athlete_id));`);
 if(!all('PRAGMA table_info(enrollments)').some(c=>c.name==='athlete_id')) db.exec('ALTER TABLE enrollments ADD COLUMN athlete_id INTEGER REFERENCES athletes(id)');
 if(!all('PRAGMA table_info(sessions)').some(c=>c.name==='cancelled')) db.exec('ALTER TABLE sessions ADD COLUMN cancelled INTEGER NOT NULL DEFAULT 0');
-// Convert earlier form submissions into persistent parent and athlete records.
+// Convert legacy records once; never resurrect future withdrawals on restart.
+if (!legacyBackfillDone) {
 db.exec('BEGIN IMMEDIATE');
 try {
  for(const e of all('SELECT * FROM enrollments WHERE athlete_id IS NULL ORDER BY id')) {
@@ -64,15 +69,17 @@ try {
  }
  db.exec('COMMIT');
 } catch(error){db.exec('ROLLBACK');throw error;}
+}
 function sessionsWithStatus() {
  const groups=all('SELECT * FROM groups'), exclusions=all('SELECT * FROM exclusions');
  return all('SELECT * FROM sessions ORDER BY starts_at').map(s=>({...s,excluded:Boolean(s.cancelled)||isExcluded(s,groups.find(g=>g.id===s.group_id),exclusions)}));
 }
 // Backfill the original charged terms once for existing enrollments.
-for(const e of all('SELECT * FROM enrollments WHERE id NOT IN (SELECT enrollment_id FROM enrollment_sessions)')) {
+if (!legacyBackfillDone) for(const e of all('SELECT * FROM enrollments WHERE id NOT IN (SELECT enrollment_id FROM enrollment_sessions)')) {
  const terms=all('SELECT * FROM sessions WHERE group_id=? AND substr(starts_at,1,7)=? AND starts_at>=?',e.group_id,e.month,e.created_at).filter(s=>!e.trial_id||s.id===e.trial_id);
  for(const term of terms) db.prepare('INSERT OR IGNORE INTO enrollment_sessions VALUES(?,?,?)').run(e.id,term.id,e.trial_id?e.amount:term.price);
 }
+migrateFoundations(db);
 function chargedTotals() {
  const active=new Set(sessionsWithStatus().filter(s=>!s.excluded).map(s=>s.id));
  const totals=new Map();
@@ -110,6 +117,7 @@ function assignTrainers(groupId,ids) {
 }
 function quote(b) {
  const g = group(b.group_id);
+ if (locationById(g.location_id).status !== 'active') throw Error('Zapisy w tej placówce są zamknięte.');
  const joinedAt=warsawNow();
  const month=enrollmentMonth(b.month,joinedAt);
  const sessions = sessionsWithStatus().filter(s=>s.group_id===g.id&&s.starts_at.startsWith(month)&&!s.excluded);
@@ -130,7 +138,14 @@ function stateFor(user) {
  const ids=new Set(athletes.map(a=>a.id));
  const enrollments=all(`SELECT e.*, a.name AS child, u.name AS parent, u.email, g.name AS group_name, g.location, e.amount + COALESCE((SELECT SUM(a.amount) FROM adjustments a WHERE a.enrollment_id=e.id),0) AS balance FROM enrollments e JOIN groups g ON g.id=e.group_id JOIN athletes a ON a.id=e.athlete_id JOIN users u ON u.id=a.parent_id ORDER BY e.id DESC`).filter(e=>admin||ids.has(e.athlete_id));
  const enrollmentIds=new Set(enrollments.map(e=>e.id));
- return {user,athletes,parents:admin?all("SELECT id,name,email,phone,password_hash IS NOT NULL AS active FROM users WHERE role='parent' ORDER BY name"):[user],memberships:all('SELECT * FROM memberships').filter(m=>admin||ids.has(m.athlete_id)),locations:all('SELECT id,name FROM locations ORDER BY name'),trainers:admin?all('SELECT * FROM trainers ORDER BY name'):all('SELECT id,name FROM trainers ORDER BY name'),group_trainers:all('SELECT * FROM group_trainers'),logo:existsSync(logoPath)?'/logo?v='+Date.now():null,groups:all(`SELECT g.*,(SELECT COUNT(*) FROM memberships m WHERE m.group_id=g.id AND m.status IN ('active','trial')) AS member_count FROM groups g`),sessions:sessionsWithStatus(),exclusions:all('SELECT * FROM exclusions ORDER BY start_date'),enrollments,adjustments:all('SELECT * FROM adjustments ORDER BY id DESC').filter(a=>admin||enrollmentIds.has(a.enrollment_id)),now:warsawNow()};
+ const ownGroupIds=new Set(all('SELECT * FROM memberships').filter(m=>ids.has(m.athlete_id)).map(m=>m.group_id));
+ const availableLocations=new Set(all("SELECT id FROM locations WHERE status='active'").map(l=>l.id));
+ const visibleGroups=all(`SELECT g.*,(SELECT COUNT(*) FROM memberships m WHERE m.group_id=g.id AND m.status IN ('active','trial')) AS member_count FROM groups g`).filter(g=>admin||availableLocations.has(g.location_id)||ownGroupIds.has(g.id));
+ const visibleIds=new Set(visibleGroups.map(g=>g.id));
+ const trainerLinks=all('SELECT * FROM group_trainers').filter(gt=>admin||visibleIds.has(gt.group_id));
+ const trainerIds=new Set(trainerLinks.map(gt=>gt.trainer_id));
+ const visibleLocations=new Set(visibleGroups.map(g=>g.location_id));
+ return {user,athletes,parents:admin?all("SELECT id,name,email,phone,access_status,password_hash IS NOT NULL AS active FROM users WHERE role='parent' ORDER BY name"):[user],memberships:all('SELECT * FROM memberships').filter(m=>admin||ids.has(m.athlete_id)),locations:admin?all('SELECT * FROM locations ORDER BY name'):all('SELECT id,name,status FROM locations ORDER BY name').filter(l=>availableLocations.has(l.id)||visibleLocations.has(l.id)),trainers:admin?all('SELECT * FROM trainers ORDER BY name'):all('SELECT id,name FROM trainers ORDER BY name').filter(t=>trainerIds.has(t.id)),group_trainers:trainerLinks,logo:existsSync(logoPath)?'/logo?v='+Date.now():null,groups:visibleGroups,sessions:sessionsWithStatus().filter(s=>admin||ownGroupIds.has(s.group_id)||(visibleIds.has(s.group_id)&&s.starts_at>=warsawNow())),exclusions:admin?all('SELECT * FROM exclusions ORDER BY start_date'):[],enrollments,adjustments:all('SELECT * FROM adjustments ORDER BY id DESC').filter(a=>admin||enrollmentIds.has(a.enrollment_id)),now:warsawNow()};
 }
 async function readJSON(req) {
  if(!req.headers['content-type']?.startsWith('application/json')) throw Object.assign(Error('Wymagany format JSON.'),{status:415});
@@ -153,17 +168,20 @@ function saveEnrollment(b,athlete) {
 }
 
 const signupAttempts=new Map();
-const server = http.createServer(async (req,res) => {
+const server = http.createServer(withRequestContext(async (req,res) => {
  const url = new URL(req.url, 'http://localhost');
  const send = (status, data) => { res.writeHead(status, {'Content-Type':'application/json; charset=utf-8'}); res.end(JSON.stringify(data)); };
  try {
   res.setHeader('Cache-Control','no-store');
   res.setHeader('X-Content-Type-Options','nosniff');
   if(req.method==='POST'&&req.headers.origin&&req.headers.origin!==`http://${req.headers.host}`&&req.headers.origin!==`https://${req.headers.host}`) return send(403,{error:'Niedozwolone źródło żądania.'});
+  requestContext.getStore().actorId = auth.user(req)?.id ?? null;
   if(url.pathname.startsWith('/api/auth/')) return await auth.route(req,res,url.pathname,req.method==='POST'?await readJSON(req):null,send);
   if(req.method==='GET'&&url.pathname==='/api/public/catalog') {
    const now=warsawNow();
-   return send(200,{logo:existsSync(logoPath)?'/logo':null,locations:all('SELECT id,name FROM locations ORDER BY name'),groups:all(`SELECT id,location_id,name,capacity,price,trial_price,trials,weekday,start_time,end_time,(SELECT COUNT(*) FROM memberships m WHERE m.group_id=groups.id AND m.status IN ('active','trial')) AS member_count FROM groups`),trainers:all('SELECT id,name FROM trainers ORDER BY name'),group_trainers:all('SELECT * FROM group_trainers'),sessions:sessionsWithStatus().filter(s=>!s.cancelled&&s.starts_at>=now).map(s=>({id:s.id,group_id:s.group_id,starts_at:s.starts_at,ends_at:s.ends_at,excluded:s.excluded})),now});
+   const activeLocations = all("SELECT id,name FROM locations WHERE status='active' ORDER BY name");
+   const activeGroups = new Set(all("SELECT g.id FROM groups g JOIN locations l ON l.id=g.location_id WHERE l.status='active'").map(g=>g.id));
+   return send(200,{logo:existsSync(logoPath)?'/logo':null,locations:activeLocations,groups:all(`SELECT id,location_id,name,capacity,price,trial_price,trials,weekday,start_time,end_time,(SELECT COUNT(*) FROM memberships m WHERE m.group_id=groups.id AND m.status IN ('active','trial')) AS member_count FROM groups`).filter(g=>activeGroups.has(g.id)),trainers:all('SELECT id,name FROM trainers WHERE id IN (SELECT gt.trainer_id FROM group_trainers gt JOIN groups g ON g.id=gt.group_id JOIN locations l ON l.id=g.location_id WHERE l.status=?) ORDER BY name','active'),group_trainers:all('SELECT * FROM group_trainers').filter(gt=>activeGroups.has(gt.group_id)),sessions:sessionsWithStatus().filter(s=>activeGroups.has(s.group_id)&&!s.cancelled&&s.starts_at>=now).map(s=>({id:s.id,group_id:s.group_id,starts_at:s.starts_at,ends_at:s.ends_at,excluded:s.excluded})),now});
   }
   if(req.method==='POST'&&url.pathname==='/api/public/quote') {
    const q=quote(await readJSON(req));return send(200,{amount:q.amount,count:q.count});
@@ -200,8 +218,17 @@ const server = http.createServer(async (req,res) => {
   const user=auth.user(req);
   if(url.pathname.startsWith('/api/')) {
    if(!user) return send(401,{error:'Zaloguj się, aby kontynuować.'});
+   if (!['admin','parent'].includes(user.role)) return send(403,{error:'Brak dostępu dla tej roli.'});
    const parentPaths=['/api/state','/api/athletes','/api/athletes/update','/api/quote','/api/enrollments'];
    if(user.role!=='admin'&&!parentPaths.includes(url.pathname)) return send(403,{error:'Ta operacja wymaga konta administratora.'});
+  }
+  if(req.method==='GET'&&url.pathname==='/api/audit') {
+   const before=url.searchParams.get('before');
+   const limit=50;
+   if(before!==null&&(!/^\d+$/.test(before)||!Number.isSafeInteger(Number(before))||Number(before)<1)) throw Error('Nieprawidłowy kursor.');
+   const rows=all('SELECT a.*,u.name AS actor_name FROM audit_logs a LEFT JOIN users u ON u.id=a.actor_id WHERE a.id<? ORDER BY a.id DESC LIMIT ?',before===null?Number.MAX_SAFE_INTEGER:Number(before),limit+1);
+   const more=rows.length>limit; const items=rows.slice(0,limit);
+   return send(200,{items,next_cursor:more?items.at(-1).id:null});
   }
   if (req.method === 'GET' && url.pathname === '/api/state') return send(200,stateFor(user));
   if(req.method==='GET'&&url.pathname==='/logo') {
@@ -227,6 +254,20 @@ const server = http.createServer(async (req,res) => {
     const id=Number(db.prepare("INSERT INTO users(name,email,phone,role,created_at) VALUES(?,?,?,'parent',?)").run(name,email,phone,warsawNow()).lastInsertRowid);
     return send(201,{id});
    }
+   if(url.pathname==='/api/parents/access') {
+    const id=integer(b.parent_id,1,Number.MAX_SAFE_INTEGER);
+    if(!['active','blocked'].includes(b.access_status)) throw Error('Nieprawidłowy status konta.');
+    if(!db.prepare("SELECT id FROM users WHERE id=? AND role='parent'").get(id)) throw Error('Nie znaleziono rodzica.');
+    db.exec('BEGIN IMMEDIATE');
+    try {
+     db.prepare('UPDATE users SET access_status=? WHERE id=?').run(b.access_status,id);
+     if(b.access_status==='blocked') {
+      db.prepare('DELETE FROM auth_sessions WHERE user_id=?').run(id);
+      db.prepare('DELETE FROM invitations WHERE user_id=?').run(id);
+     }
+     db.exec('COMMIT');return send(200,{ok:true});
+    }catch(error){db.exec('ROLLBACK');throw error;}
+   }
    if(url.pathname==='/api/parents/invite') return send(200,{token:auth.invite(integer(b.parent_id,1,Number.MAX_SAFE_INTEGER))});
    if(url.pathname==='/api/athletes'||url.pathname==='/api/athletes/update') {
     const existing=url.pathname.endsWith('/update')?athleteById(b.id,user):null;
@@ -245,16 +286,26 @@ const server = http.createServer(async (req,res) => {
     const existing=url.pathname.endsWith('/update')?locationById(b.id):null;
     const duplicate=db.prepare('SELECT id FROM locations WHERE name_key=?').get(key);
     if(duplicate&&duplicate.id!==existing?.id) throw Error('Taka lokalizacja już istnieje. Wybierz ją z listy.');
-    if(!existing) {
-     const id=Number(db.prepare('INSERT INTO locations(name,name_key) VALUES(?,?)').run(name,key).lastInsertRowid);
-     return send(201,{id});
+    const values={name,name_key:key};
+    for(const field of ['address','city','phone','email','contact_name','notes']) {
+     const value=b[field]===undefined?(existing?.[field]||''):b[field];
+     if(typeof value!=='string'||value.length>(field==='notes'?2000:200)) throw Error('Nieprawidłowe dane placówki: '+field);
+     values[field]=value.trim();
     }
+    if(values.email) values.email=emailAddress(values.email);
+    if(values.phone&&(!/^[+0-9\s().-]+$/.test(values.phone)||values.phone.replace(/\D/g,'').length<7||values.phone.replace(/\D/g,'').length>15)) throw Error('Podaj poprawny telefon placówki.');
+    values.status=b.status??existing?.status??'active';
+    if(!['active','paused','archived'].includes(values.status)) throw Error('Nieprawidłowy status placówki.');
     db.exec('BEGIN IMMEDIATE');
     try {
-     db.prepare('UPDATE locations SET name=?,name_key=? WHERE id=?').run(name,key,existing.id);
-     db.prepare('UPDATE groups SET location=? WHERE location_id=?').run(name,existing.id);
-     db.prepare("UPDATE exclusions SET location=? WHERE scope='location' AND location_id=?").run(name,existing.id);
-     db.exec('COMMIT');return send(200,{id:existing.id});
+     let id=existing?.id;
+     if(existing) db.prepare('UPDATE locations SET '+Object.keys(values).map(k=>k+'=?').join(',')+' WHERE id=?').run(...Object.values(values),id);
+     else id=Number(db.prepare('INSERT INTO locations('+Object.keys(values).join(',')+') VALUES('+Object.keys(values).map(()=>'?').join(',')+')').run(...Object.values(values)).lastInsertRowid);
+     if(existing) {
+      db.prepare('UPDATE groups SET location=? WHERE location_id=?').run(name,id);
+      db.prepare("UPDATE exclusions SET location=? WHERE scope='location' AND location_id=?").run(name,id);
+     }
+     db.exec('COMMIT');return send(existing?200:201,{id});
     }catch(error){db.exec('ROLLBACK');throw error;}
    }
    if(url.pathname==='/api/trainers') {
@@ -274,6 +325,8 @@ const server = http.createServer(async (req,res) => {
    if(url.pathname==='/api/groups'||url.pathname==='/api/groups/update') {
     const existing=url.pathname.endsWith('/update')?group(b.id):null;
     const location=locationById(b.location_id), name=text(b.name,'grupa');
+    if(existing&&existing.location_id!==location.id) throw Error('Nie można przenieść całej grupy do innej placówki.');
+    if(!existing&&location.status!=='active') throw Error('Nową grupę można utworzyć tylko w aktywnej placówce.');
     const price=integer(b.price,0,10000000), capacity=integer(b.capacity,1,500), trialPrice=integer(b.trial_price,0,10000000);
     const assigned=trainerIds(b.trainer_ids);
     let terms;
@@ -370,5 +423,5 @@ const server = http.createServer(async (req,res) => {
   }
   send(404,{error:'Nie znaleziono strony.'});
  } catch(e) {send(e.status||400,{error:e.message});}
-});
+}));
 server.listen(Number(process.env.PORT||3000), process.env.HOST||'127.0.0.1',()=>console.log('Evolution Academy: serwer uruchomiony'));

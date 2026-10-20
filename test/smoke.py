@@ -23,9 +23,11 @@ with tempfile.TemporaryDirectory() as directory:
   match=next((location for location in request('/api/state')['locations'] if location['name']==name),None)
   return match['id'] if match else request('/api/locations',{'name':name})['id']
  # Simulate an installation created by the previous version, with real persisted records.
- import sqlite3
+ import sqlite3, hashlib
  with sqlite3.connect(env['DB_PATH']) as legacy:
   legacy.executescript("""
+   CREATE TABLE users(id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, phone TEXT NOT NULL DEFAULT '', role TEXT NOT NULL CHECK(role IN ('admin','parent')), password_hash TEXT, created_at TEXT NOT NULL);
+   CREATE TABLE auth_sessions(token_hash TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),expires_at INTEGER NOT NULL);
    CREATE TABLE groups(id INTEGER PRIMARY KEY, location TEXT NOT NULL, name TEXT NOT NULL, capacity INTEGER NOT NULL, price INTEGER NOT NULL, trial_price INTEGER NOT NULL, trials INTEGER NOT NULL);
    CREATE TABLE sessions(id INTEGER PRIMARY KEY, group_id INTEGER REFERENCES groups(id), starts_at TEXT NOT NULL, price INTEGER NOT NULL);
    CREATE TABLE enrollments(id INTEGER PRIMARY KEY, group_id INTEGER REFERENCES groups(id), parent TEXT NOT NULL, email TEXT NOT NULL, child TEXT NOT NULL, month TEXT NOT NULL, trial_id INTEGER REFERENCES sessions(id), amount INTEGER NOT NULL, created_at TEXT NOT NULL);
@@ -38,8 +40,19 @@ with tempfile.TemporaryDirectory() as directory:
    INSERT INTO enrollments VALUES(1,1,'Rodzic','old@example.org','Starszy zapis','2099-09',NULL,10000,'2099-09-01T12:00:00');
    INSERT INTO adjustments VALUES(1,1,-1000,'Stary rabat','2099-09-01T12:00:00');
   """)
+  salt='0123456789abcdef0123456789abcdef'
+  original_hash=salt+':'+hashlib.scrypt(b'legacy-parent-password',salt=salt.encode(),n=16384,r=8,p=1,dklen=64,maxmem=67108864).hex()
+  legacy.execute("INSERT INTO users(id,name,email,role,password_hash,created_at) VALUES(42,'Rodzic','old@example.org','parent',?,'2099-09-01T12:00:00')",(original_hash,))
+  legacy.execute('INSERT INTO auth_sessions VALUES(?,42,4102444800000)',(hashlib.sha256(b'a'*64).hexdigest(),))
  p=start()
  try:
+  existing_request=urllib.request.Request('http://127.0.0.1:3107/api/state',headers={'Cookie':'ea_session='+'a'*64})
+  with urllib.request.urlopen(existing_request) as response:
+   existing=json.load(response);assert existing['user']['id']==42 and existing['athletes'][0]['parent_id']==42
+  with sqlite3.connect(env['DB_PATH']) as migrated_db:
+   assert migrated_db.execute('SELECT password_hash FROM users WHERE id=42').fetchone()[0]==original_hash
+   assert migrated_db.execute('SELECT access_status FROM users WHERE id=42').fetchone()[0]=='active'
+
   request('/api/auth/setup',{'name':'Administrator testowy','email':'admin@example.org','password':'development-test-password'})
   assert request('/api/state')['enrollments'][0]['balance']==9000
   migrated=request('/api/state')

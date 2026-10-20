@@ -98,3 +98,9 @@ a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outli
 .list-pagination span { font-size: 12px; color: var(--muted); }
 .list-pagination button:disabled { cursor: default; }
 @media(max-width:580px) { .directory-filters { grid-template-columns: 1fr; } }
+.audit-changes { display: grid; gap: 10px; margin-top: 12px; }
+.audit-changes > div { display: grid; grid-template-columns: 160px minmax(0,1fr); gap: 12px; }
+.audit-changes span { white-space: pre-wrap; overflow-wrap: anywhere; }
+#audit-list summary { cursor: pointer; color: var(--accent); margin-top: 8px; }
+#location-dialog { width: min(700px,calc(100% - 32px)); }
+@media(max-width:580px) { .audit-changes > div { grid-template-columns: 1fr; gap: 2px; } }

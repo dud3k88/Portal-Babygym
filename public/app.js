@@ -8,8 +8,10 @@ const $ = selector => document.querySelector(selector);
 const money = value => new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' }).format(value / 100);
 const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const dayNames = ['niedziela', 'poniedziałek', 'wtorek', 'środa', 'czwartek', 'piątek', 'sobota'];
-const viewNames = { auth: 'Logowanie', athletes: 'Zawodnicy', groups: 'Grupy', locations: 'Lokalizacje', 'days-off': 'Dni wolne', trainers: 'Trenerzy', billing: 'Rozliczenia', settings: 'Wygląd', parent: 'Zapisy na zajęcia', children: 'Moje dzieci' };
+const viewNames = { audit: 'Dziennik zmian', auth: 'Logowanie', athletes: 'Zawodnicy', groups: 'Grupy', locations: 'Lokalizacje', 'days-off': 'Dni wolne', trainers: 'Trenerzy', billing: 'Rozliczenia', settings: 'Wygląd', parent: 'Zapisy na zajęcia', children: 'Moje dzieci' };
 let toastTimer;
+let auditCursor = null;
+let auditVersion = 0;
 
 async function api(path, body) {
   const response = await fetch('/api/' + path, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {});
@@ -63,6 +65,7 @@ function switchView(view) {
   $('nav [data-view="parent"]').innerHTML = '<svg><use href="#i-arrow"/></svg>' + 'Zapisy na zajęcia';
   $('.workspace-label').innerHTML = '<span class="workspace-dot"></span> ' + (!authInfo.user ? 'Evolution Academy' : authInfo.user.role === 'parent' ? 'Panel rodzica' : 'Panel administratora');
   $('#notice').hidden = true;
+  if(view==='audit') loadAudit();
 }
 
 function openDialog(id) {
@@ -89,27 +92,54 @@ function trainerCheckboxes(ids = []) {
 function updateLocationSelect() {
   const select = $('#group-location');
   const previous = select.value;
-  select.innerHTML = '<option value="">Wybierz lokalizację</option>' + state.locations.map(location => `<option value="${location.id}">${escape(location.name)}</option>`).join('');
+  select.innerHTML = '<option value="">Wybierz lokalizację</option>' + state.locations.map(location => `<option value="${location.id}" ${location.status!=='active'?'disabled':''}>${escape(location.name)}</option>`).join('');
   select.value = previous;
   $('#group-location-help').innerHTML = state.locations.length
     ? 'Wybierz zapisaną lokalizację. Nowe przedszkola dodasz w dziale „Lokalizacje”.'
     : 'Najpierw dodaj przedszkole w dziale „Lokalizacje”. <button type="button" class="tertiary" data-view="locations">Przejdź do lokalizacji →</button>';
 }
 
+const locationStatuses = {active:'Aktywna',paused:'Wstrzymana',archived:'Archiwalna'};
 function renderLocations() {
-  $('#location-list').innerHTML = state.locations.map(location => {
+  const status = $('#location-status-filter').value;
+  $('#location-list').innerHTML = state.locations.filter(location=>!status||location.status===status).map(location => {
     const groups = state.groups.filter(group => group.location_id === location.id);
-    return `<div class="entry exclusion-entry"><div><strong>${escape(location.name)}</strong><small>Liczba grup: ${groups.length}${groups.length ? '<br>' + groups.map(group => escape(group.name)).join(', ') : ' · Możesz już przypisać grupy i zaplanować dni wolne.'}</small></div><button type="button" class="secondary" data-edit-location="${location.id}">Zmień nazwę</button></div>`;
-  }).join('') || emptyState('location', 'Dodaj pierwszą lokalizację', 'Zapisz nazwę przedszkola, a następnie wybierz je przy tworzeniu grupy.', '<button type="button" class="secondary" data-new-location>Dodaj lokalizację</button>');
+    const groupIds=new Set(groups.map(group=>group.id));
+    const count=new Set(state.memberships.filter(member=>groupIds.has(member.group_id)).map(member=>member.athlete_id)).size;
+    const trainerNames=[...new Set(groups.flatMap(group=>trainersFor(group.id).map(trainer=>trainer.name)))];
+    return `<div class="entry exclusion-entry"><div><strong>${escape(location.name)}</strong> <span class="pill">${locationStatuses[location.status]}</span><small>${escape([location.address,location.city].filter(Boolean).join(', '))}<br>Grupy: ${groups.length} · Zawodnicy: ${count}${trainerNames.length?'<br>Trenerzy: '+escape(trainerNames.join(', ')):''}${location.contact_name?'<br>Kontakt: '+escape(location.contact_name):''}${location.phone?' · '+escape(location.phone):''}${location.email?' · '+escape(location.email):''}</small></div><button type="button" class="secondary" data-edit-location="${location.id}">Edytuj placówkę</button></div>`;
+  }).join('') || emptyState('location', 'Brak lokalizacji', 'Dodaj placówkę lub zmień filtr statusu.', '<button type="button" class="secondary" data-new-location>Dodaj lokalizację</button>');
 }
 
 function openLocation(id = null) {
-  const form = $('#save-location');
+  const form = $('#save-location'), location=state.locations.find(entry=>entry.id===id);
   form.reset();
   form.elements.id.value = id || '';
-  form.elements.name.value = id ? state.locations.find(location => location.id === id).name : '';
-  $('#location-dialog-title').textContent = id ? 'Zmień nazwę lokalizacji' : 'Nowa lokalizacja';
+  for(const field of ['name','address','city','phone','email','contact_name','notes']) form.elements[field].value=location?.[field]||'';
+  form.elements.status.value=location?.status||'active';
+  $('#location-dialog-title').textContent = id ? 'Ustawienia placówki' : 'Nowa lokalizacja';
   openDialog('location-dialog');
+}
+
+async function loadAudit(append=false) {
+  const version=++auditVersion;
+  $('#audit-more').disabled=true;
+  try {
+    const result=await api('audit'+(append&&auditCursor?'?before='+auditCursor:''));
+    if(version!==auditVersion||authInfo.user?.role!=='admin')return;
+    auditCursor=result.next_cursor;
+    const entities={locations:'Placówka',users:'Konto',athletes:'Zawodnik',groups:'Grupa',sessions:'Termin',memberships:'Uczestnictwo',enrollments:'Należność',enrollment_sessions:'Pozycja należności',adjustments:'Korekta',exclusions:'Dni wolne',trainers:'Trener',group_trainers:'Przypisanie trenera',access:'Dostęp'};
+    const actions={insert:'Dodano',update:'Zmieniono',delete:'Usunięto','session.started':'Rozpoczęto sesję','session.ended':'Wylogowano','account.activated':'Aktywowano konto','invitation.created':'Utworzono zaproszenie'};
+    const fields={id:'ID',name:'Nazwa',email:'Email',phone:'Telefon',role:'Rola',access_status:'Dostęp',address:'Adres',city:'Miejscowość',contact_name:'Osoba kontaktowa',notes:'Notatki',status:'Status',parent_id:'Rodzic ID',birth_date:'Data urodzenia',location_id:'Placówka ID',capacity:'Limit miejsc',price:'Cena (gr)',trial_price:'Cena próby (gr)',trials:'Próby',start_date:'Od dnia',end_date:'Do dnia',start_time:'Od godziny',end_time:'Do godziny',weekday:'Dzień tygodnia',group_id:'Grupa ID',starts_at:'Początek',ends_at:'Koniec',cancelled:'Odwołano',athlete_id:'Zawodnik ID',joined_at:'Data zapisu',trial_id:'Próba ID',month:'Miesiąc',amount:'Kwota (gr)',enrollment_id:'Należność ID',session_id:'Termin ID',reason:'Powód',scope:'Zakres',trainer_id:'Trener ID'};
+    const markup=result.items.map(entry=>{
+      const before=JSON.parse(entry.before_json||'{}'),after=JSON.parse(entry.after_json||'{}');
+      const changes=[...new Set([...Object.keys(before),...Object.keys(after)])].filter(key=>before[key]!==after[key]).map(key=>`<div><strong>${fields[key]||escape(key)}</strong><span>${escape(before[key]??'—')} → ${escape(after[key]??'—')}</span></div>`).join('');
+      const date=new Intl.DateTimeFormat('pl-PL',{dateStyle:'short',timeStyle:'medium',timeZone:'Europe/Warsaw'}).format(new Date(entry.created_at));
+      return `<article class="entry"><strong>${entities[entry.entity_type]||escape(entry.entity_type)} #${escape(entry.entity_id)} · ${actions[entry.action]||escape(entry.action)}</strong><small>${escape(date)} · ${escape(entry.actor_name||'System / rejestracja publiczna')}</small>${changes?`<details><summary>Szczegóły zmiany</summary><div class="audit-changes">${changes}</div></details>`:''}</article>`;
+    }).join('');
+    if(append)$('#audit-list').insertAdjacentHTML('beforeend',markup);else $('#audit-list').innerHTML=markup||'<p>Brak wpisów w dzienniku.</p>';
+    $('#audit-more').hidden=!auditCursor;
+  }catch(error){notice(error.message,true);}finally{if(version===auditVersion)$('#audit-more').disabled=false;}
 }
 
 function enrollmentBody() {
@@ -122,7 +152,7 @@ async function refresh() {
   authInfo.user = state.user;
   $('[name="month"]').value = state.now.slice(0,7);
   const selectedLocation = $('#location').value;
-  $('#location').innerHTML = '<option value="">Wybierz lokalizację</option>' + state.locations.filter(location => state.groups.some(group => group.location_id === location.id)).map(location => `<option value="${location.id}">${escape(location.name)}</option>`).join('');
+  $('#location').innerHTML = '<option value="">Wybierz lokalizację</option>' + state.locations.filter(location => location.status==='active' && state.groups.some(group => group.location_id === location.id)).map(location => `<option value="${location.id}">${escape(location.name)}</option>`).join('');
   $('#location').value = selectedLocation;
   updateGroups();
   renderAdmin();
@@ -364,6 +394,19 @@ document.addEventListener('click', event => {
 window.addEventListener('hashchange', () => authInfo.user ? switchView(window.location.hash.slice(1)) : showAuth(authMode));
 switchView(window.location.hash.slice(1));
 
+$('#audit-refresh').onclick=()=>loadAudit();
+$('#audit-more').onclick=()=>loadAudit(true);
+$('#location-status-filter').onchange=renderLocations;
+document.addEventListener('click',async event=>{
+  const button=event.target.closest('[data-parent-access]');
+  if(!button)return;
+  if(!confirm(button.dataset.accessStatus==='blocked'?'Zablokować konto rodzica i zakończyć jego sesje?':'Odblokować konto rodzica?'))return;
+  button.disabled=true;
+  try {
+    await api('parents/access',{parent_id:Number(button.dataset.parentAccess),access_status:button.dataset.accessStatus});
+    await refresh();openAthleteDetail(Number(button.dataset.profile));selectAthleteTab('parent');notice('Dostęp do konta został zmieniony.');
+  }catch(error){notice(error.message,true);}finally{button.disabled=false;}
+});
 $('#location').onchange = updateGroups;
 $('#group').onchange = updateTrials;
 $('[name="month"]').onchange = updateTrials;
@@ -377,11 +420,11 @@ $('#save-location').onsubmit = async event => {
   const body = Object.fromEntries(new FormData(form));
   button.disabled = true;
   try {
-    const result = await api(body.id ? 'locations/update' : 'locations', { name: body.name, ...(body.id ? { id: Number(body.id) } : {}) });
+    const result = await api(body.id ? 'locations/update' : 'locations', { ...body, ...(body.id ? { id: Number(body.id) } : {}) });
     $('#location-dialog').close();
     await refresh();
     $('#group-location').value = result.id;
-    notice(body.id ? 'Nazwa lokalizacji została zaktualizowana w całym systemie.' : 'Lokalizacja dodana. Możesz teraz wybrać ją przy tworzeniu grupy.');
+    notice(body.id ? 'Ustawienia placówki zostały zapisane.' : 'Lokalizacja dodana. Możesz teraz wybrać ją przy tworzeniu grupy.');
   } catch (error) { notice(error.message, true); }
   finally { button.disabled = false; }
 };
@@ -392,7 +435,7 @@ $('#create-group').onsubmit = async event => {
   button.disabled = true;
   const body = Object.fromEntries(new FormData(form));
   try {
-    const result = await api(body.id ? 'groups/update' : 'groups', { ...body, id: body.id ? Number(body.id) : undefined, location_id: Number(body.location_id), price: Math.round(Number(body.price) * 100), trial_price: Math.round(Number(body.trial_price) * 100), capacity: Number(body.capacity), trials: body.trials === 'on', weekday: Number(body.weekday), trainer_ids: selectedIds('#new-group-trainers') });
+    const result = await api(body.id ? 'groups/update' : 'groups', { ...body, id: body.id ? Number(body.id) : undefined, location_id: Number($('#group-location').value), price: Math.round(Number(body.price) * 100), trial_price: Math.round(Number(body.trial_price) * 100), capacity: Number(body.capacity), trials: body.trials === 'on', weekday: Number(body.weekday), trainer_ids: selectedIds('#new-group-trainers') });
     form.reset();
     $('#group-dialog').close();
     await refresh();
@@ -510,6 +553,7 @@ function openGroup(id = null) {
   form.reset();
   form.elements.id.value = id || '';
   const group = state.groups.find(entry => entry.id === id);
+  form.elements.location_id.disabled=Boolean(group);
   $('#new-group-title').textContent = group ? 'Ustawienia grupy' : 'Nowa grupa';
   $('#group-edit-note').hidden = !group;
   form.querySelector('[type="submit"]').textContent = group ? 'Zapisz zmiany' : 'Utwórz grupę';
@@ -619,8 +663,9 @@ function openAthleteDetail(id) {
       }).join('')||'<p class="hint">Zawodnik nie jest jeszcze przypisany do grupy.</p>'}
     </section>
     <section role="tabpanel" id="athlete-panel-parent" aria-labelledby="athlete-tab-parent" tabindex="0" hidden>
-      <dl class="athlete-fields"><div><dt>Rodzic</dt><dd>${escape(parent?.name||'Nie podano')}</dd></div><div><dt>Email</dt><dd>${escape(parent?.email||'Nie podano')}</dd></div><div><dt>Telefon</dt><dd>${escape(parent?.phone||'Nie podano')}</dd></div><div><dt>Konto rodzica</dt><dd>${parentActive?'Aktywne':'Oczekuje na aktywację'}</dd></div></dl>
-      ${admin&&!parentActive?`<button class="secondary" data-invite="${athlete.parent_id}">Utwórz link aktywacyjny</button>`:''}
+      <dl class="athlete-fields"><div><dt>Rodzic</dt><dd>${escape(parent?.name||'Nie podano')}</dd></div><div><dt>Email</dt><dd>${escape(parent?.email||'Nie podano')}</dd></div><div><dt>Telefon</dt><dd>${escape(parent?.phone||'Nie podano')}</dd></div><div><dt>Konto rodzica</dt><dd>${parent?.access_status==='blocked'?'Zablokowane':parentActive?'Aktywne':'Oczekuje na aktywację'}</dd></div></dl>
+      ${admin&&parent?.access_status!=='blocked'&&!parentActive?`<button class="secondary" data-invite="${athlete.parent_id}">Utwórz link aktywacyjny</button>`:''}
+      ${admin?`<button class="secondary" data-parent-access="${athlete.parent_id}" data-access-status="${parent?.access_status==='blocked'?'active':'blocked'}" data-profile="${id}">${parent?.access_status==='blocked'?'Odblokuj konto rodzica':'Zablokuj konto rodzica'}</button>`:''}
     </section>
     <section role="tabpanel" id="athlete-panel-finances" aria-labelledby="athlete-tab-finances" tabindex="0" hidden>
       <div class="athlete-finance-summary"><div><span>Do zapłaty</span><strong>${money(outstanding)}</strong></div><div><span>Nadpłata</span><strong>${money(credit)}</strong></div><div><span>Z poprzednich miesięcy</span><strong>${money(previousDue)}</strong></div></div>
@@ -755,5 +800,5 @@ $('#auth-form').onsubmit=async event=>{
   }catch(error){$('#auth-error').textContent=error.message;$('#auth-error').hidden=false;}finally{button.disabled=false;}
 };
 $('#logout').onclick=async()=>{
-  try{await api('auth/logout',{});authInfo.user=null;state=null;for(const id of ['my-children','athlete-list','athlete-detail','group-roster','enrollments','history']) document.getElementById(id).replaceChildren();window.location.hash='auth';showAuth();}catch(error){notice(error.message,true);}
+  try{await api('auth/logout',{});authInfo.user=null;state=null;for(const id of ['my-children','athlete-list','athlete-detail','group-roster','enrollments','history','audit-list']) document.getElementById(id).replaceChildren();window.location.hash='auth';showAuth();}catch(error){notice(error.message,true);}
 };

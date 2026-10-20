@@ -2,7 +2,7 @@ import { randomBytes, scrypt as scryptCallback, timingSafeEqual, createHash } fr
 import { promisify } from 'node:util';
 const scrypt = promisify(scryptCallback);
 const digest = value => createHash('sha256').update(value).digest('hex');
-const safeUser = user => user ? { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role } : null;
+const safeUser = user => user ? { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role, access_status: user.access_status } : null;
 export function emailAddress(value) {
   if (typeof value !== 'string' || value.length > 200 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())) throw Error('Podaj poprawny adres email.');
   return value.trim().toLowerCase();
@@ -21,7 +21,7 @@ async function matches(password, stored) {
   const actual = await scrypt(typeof password === 'string' ? password.slice(0, 200) : '', salt, 64);
   return timingSafeEqual(actual, Buffer.from(hash, 'hex')) && Boolean(stored);
 }
-export function createAuth(db) {
+export function createAuth(db, onEvent = () => {}) {
   db.exec(`CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE, phone TEXT NOT NULL DEFAULT '', role TEXT NOT NULL CHECK(role IN ('admin','parent')), password_hash TEXT, created_at TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS auth_sessions(token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), expires_at INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS invitations(token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), expires_at INTEGER NOT NULL);`);
@@ -30,21 +30,34 @@ export function createAuth(db) {
   function user(req) {
     const token = (req.headers.cookie || '').split(';').map(part => part.trim()).find(part => part.startsWith('ea_session='))?.slice(11);
     if (!token || !/^[a-f0-9]{64}$/.test(token)) return null;
-    return safeUser(db.prepare('SELECT u.* FROM users u JOIN auth_sessions s ON s.user_id=u.id WHERE s.token_hash=? AND s.expires_at>?').get(digest(token), Date.now()));
+    return safeUser(db.prepare("SELECT u.* FROM users u JOIN auth_sessions s ON s.user_id=u.id WHERE s.token_hash=? AND s.expires_at>? AND u.access_status='active'").get(digest(token), Date.now()));
+  }
+  function atomic(work) {
+    db.exec('SAVEPOINT auth_action');
+    try { const result=work();db.exec('RELEASE auth_action');return result; }
+    catch(error) { db.exec('ROLLBACK TO auth_action');db.exec('RELEASE auth_action');throw error; }
   }
   function session(res, userId) {
+    if (!db.prepare("SELECT id FROM users WHERE id=? AND access_status='active'").get(userId)) throw Error('Konto nie ma aktywnego dostępu.');
     const token = randomBytes(32).toString('hex');
-    db.prepare('DELETE FROM auth_sessions WHERE expires_at<?').run(Date.now());
-    db.prepare('INSERT INTO auth_sessions VALUES(?,?,?)').run(digest(token), userId, Date.now() + 7 * 86400000);
+    atomic(()=>{
+      db.prepare('DELETE FROM auth_sessions WHERE expires_at<?').run(Date.now());
+      db.prepare('INSERT INTO auth_sessions VALUES(?,?,?)').run(digest(token), userId, Date.now() + 7 * 86400000);
+      onEvent('session.started',userId);
+    });
     res.setHeader('Set-Cookie', `ea_session=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=604800${process.env.COOKIE_SECURE === '1' ? '; Secure' : ''}`);
   }
   function invite(userId) {
     const parent = db.prepare("SELECT * FROM users WHERE id=? AND role='parent'").get(userId);
     if (!parent) throw Error('Nie znaleziono rodzica.');
+    if (parent.access_status !== 'active') throw Error('Najpierw odblokuj dostęp rodzica.');
     if (parent.password_hash) throw Error('Rodzic ma już aktywne konto.');
     const token = randomBytes(32).toString('hex');
-    db.prepare('DELETE FROM invitations WHERE user_id=?').run(userId);
-    db.prepare('INSERT INTO invitations VALUES(?,?,?)').run(digest(token), userId, Date.now() + 86400000);
+    atomic(()=>{
+      db.prepare('DELETE FROM invitations WHERE user_id=?').run(userId);
+      db.prepare('INSERT INTO invitations VALUES(?,?,?)').run(digest(token), userId, Date.now() + 86400000);
+      onEvent('invitation.created',userId);
+    });
     return token;
   }
   async function route(req, res, path, body, send) {
@@ -59,8 +72,12 @@ export function createAuth(db) {
       attempts.set(key, bucket && bucket.until > now ? { ...bucket, count: bucket.count + 1 } : { until: now + 900000, count: 1 });
     }
     if (path === '/api/auth/logout') {
+      const current=user(req);
       const token = (req.headers.cookie || '').split(';').map(part => part.trim()).find(part => part.startsWith('ea_session='))?.slice(11);
-      if (token) db.prepare('DELETE FROM auth_sessions WHERE token_hash=?').run(digest(token));
+      atomic(()=>{
+        if (token) db.prepare('DELETE FROM auth_sessions WHERE token_hash=?').run(digest(token));
+        if(current) onEvent('session.ended',current.id);
+      });
       res.setHeader('Set-Cookie', 'ea_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
       return send(200, { ok: true });
     }
@@ -81,6 +98,7 @@ export function createAuth(db) {
       const email = emailAddress(body.email);
       const account = db.prepare('SELECT * FROM users WHERE email=?').get(email);
       if (!await matches(body.password, account?.password_hash)) return send(401, { error: 'Nieprawidłowy email lub hasło. Dla przeniesionych danych potrzebny jest link aktywacyjny od administratora.' });
+      if(db.prepare('SELECT access_status FROM users WHERE id=?').get(account.id)?.access_status!=='active') return send(403,{error:'Dostęp do konta został zablokowany. Skontaktuj się z administratorem.'});
       session(res, account.id);
       return send(200, { user: safeUser(account) });
     }
@@ -91,9 +109,10 @@ export function createAuth(db) {
       db.exec('BEGIN IMMEDIATE');
       try {
         const valid = db.prepare('SELECT * FROM invitations WHERE token_hash=? AND expires_at>?').get(digest(String(body.token)), Date.now());
-        if (!valid) throw Error('Link aktywacyjny wygasł lub został wykorzystany.');
+        if (!valid || db.prepare('SELECT access_status FROM users WHERE id=?').get(valid.user_id)?.access_status!=='active') throw Error('Link aktywacyjny wygasł lub został wykorzystany.');
         db.prepare('UPDATE users SET password_hash=? WHERE id=? AND password_hash IS NULL').run(hash, valid.user_id);
         db.prepare('DELETE FROM invitations WHERE user_id=?').run(valid.user_id);
+        onEvent('account.activated',valid.user_id);
         db.exec('COMMIT');
       } catch (error) { db.exec('ROLLBACK'); throw error; }
       session(res, invitation.user_id);

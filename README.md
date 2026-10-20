@@ -1,6 +1,19 @@
 # Evolution Academy — środowisko deweloperskie
 
-System zapisów na zajęcia, kartotek zawodników i miesięcznych należności. Wymaga Node.js 24+; baza SQLite i moduły uwierzytelniania są dostępne w Node. Brak zewnętrznych zależności aplikacji. Python 3 jest potrzebny tylko do testów integracyjnych.
+System zapisów na zajęcia, kartotek zawodników i miesięcznych należności. Wymaga Node.js 24+; baza SQLite i moduły uwierzytelniania są dostępne w Node. Brak zewnętrznych zależności aplikacji. Python 3 służy do testów integracyjnych i narzędzia kopii zapasowych. Playwright jest zależnością deweloperską do E2E; serwer nie ma zależności runtime.
+
+## Specyfikacja i etap 1 (20.10.2026)
+
+- [Zatwierdzona specyfikacja](docs/SPECYFIKACJA.md)
+- [Audyt 10 modułów, model danych, ryzyka i plan etapów](docs/AUDYT-I-PLAN.md)
+- [Wdrożony etap 1 i checklista odbioru](docs/ETAP-1.md)
+- [Kopia, testowe odtworzenie i procedura aktualizacji](docs/OPERACJE.md)
+
+Przed pierwszym uruchomieniem tej aktualizacji zatrzymaj aplikację i wykonaj kopię
+bazy oraz logo według instrukcji. Nowy schemat dodaje dane/status placówki, kontrolę
+dostępu rodzica i dziennik zmian. Istniejące identyfikatory i naliczenia pozostają.
+Nie uruchamiaj wcześniejszego kodu na bazie z nowymi triggerami audytu; wycofanie
+wymaga odtworzenia kopii do osobnego katalogu.
 
 ## Uruchomienie
 
@@ -28,10 +41,11 @@ Link z adresem localhost działa tylko na komputerze z serwerem. Wersja lokalna 
 
 - **Grupy:** najpierw wybierz lokalizację, potem grupę. Grupy są wyświetlane jedna pod drugą. Wiersz pokazuje termin, prowadzącego i liczbę zapisanych osób względem limitu. Przycisk **Wejdź** otwiera osobny widok grupy z zawodnikami, harmonogramem, miesięczną opłatą i przyciskiem edycji ustawień. Wybrany miesiąc dotyczy szczegółów harmonogramu, nie liczebności grupy. Liczebność wynika ze stałych przypisań, a nie z liczby miesięcznych naliczeń.
 - **Zawodnicy:** jedna lista kartotek, po jednym wierszu na zawodnika niezależnie od liczby grup i lokalizacji. Wyszukiwanie po dziecku, rodzicu lub emailu. Po wejściu dostępne są zakładki „Dane”, „Grupy”, „Rodzic” i „Rozliczenia”; przypisania nie są powielane na liście głównej. Każdy zawodnik ma przypisanego rodzica; administrator może dodać profil rodzica przed dodaniem dziecka. Zmiana przypisanego rodzica przenosi dostęp do kartoteki i rozliczeń dziecka.
-- **Lokalizacje:** rejestr przedszkoli wybieranych z listy. Nazwy różniące się tylko wielkością liter lub dodatkowymi spacjami nie tworzą duplikatów. Poprawienie nazwy aktualizuje etykiety w całym systemie, zachowując identyfikatory i wykluczenia. Nie zgadujemy, czy różne literówki oznaczają jedno miejsce.
+- **Lokalizacje:** rejestr przedszkoli wybieranych z listy. Nazwy różniące się tylko wielkością liter lub dodatkowymi spacjami nie tworzą duplikatów. Kartoteka zawiera też adres, kontakt i notatki administratora oraz status aktywna/wstrzymana/archiwalna. Dwa ostatnie zamykają nowe zapisy i tworzenie grup, zachowując istniejący grafik i saldo. Poprawienie nazwy aktualizuje etykiety w całym systemie, zachowując identyfikatory i wykluczenia. Nie zgadujemy, czy różne literówki oznaczają jedno miejsce.
 - **Dni wolne:** dzień lub zakres dla całego systemu, wybranych lokalizacji albo grup. Lokalizacje mogą mieć dni wolne jeszcze przed utworzeniem grup. Święta dodaje administrator — nie są automatycznie importowane.
 - **Trenerzy:** profile prowadzących i przypisania wielu trenerów do jednej grupy. Dodanie profilu nie tworzy konta logowania i nie wysyła zaproszenia. Obecności i konta trenerów są kolejnym etapem.
 - **Rozliczenia:** należności za wybrany miesiąc, ręczne korekty z powodem i historia korekt automatycznych.
+- **Dziennik zmian:** historia zmian danych oraz udanych operacji dostępu, z autorem i starymi/nowymi wartościami. Wyłącznie Administrator, od momentu wdrożenia dziennika.
 - **Wygląd:** wgranie oryginalnego logo PNG/JPG/WebP do 5 MB. Obraz jest zachowywany bez przetwarzania w lokalnym `data/logo`. Kolory panelu pochodzą z przekazanego znaku marki. Do czasu wgrania pliku widoczna jest tekstowa nazwa.
 
 ## Grafik i edycja grup
@@ -40,7 +54,7 @@ Tworząc grupę wybierz lokalizację i podaj nazwę, limit, stawkę, opcjonalnyc
 
 **Edytuj grupę** pozwala zmienić ustawienia i przyszły grafik. Limit nie może być mniejszy od liczby przypisanych dzieci. Odbyte zajęcia, zapisy i historyczne naliczenia nie są kasowane. Zmiana samej godziny zachowuje tożsamość terminu. Usunięte przyszłe terminy są oznaczane jako odwołane; nowe daty otrzymują osobne rekordy. Zmiany liczby terminów w opłacanym miesiącu tworzą automatyczne korekty. Nowa stawka dotyczy nowych zapisów, a istniejące rozliczenia zachowują uzgodnione ceny jednostek. Nie realizuje to zwrotu pieniędzy — płatności nie są podłączone.
 
-Zapis próbny dotyczy konkretnego terminu. Jeżeli termin zostanie odwołany, jest korygowany; próba nie jest samoczynnie przenoszona na inną datę. Historia odwołanych terminów pozostaje w bazie. Lokalizacja zajęć jest zapisywana przy terminie, aby zmiana lokalizacji grupy nie zmieniała zasad dawnych wykluczeń.
+Zapis próbny dotyczy konkretnego terminu. Jeżeli termin zostanie odwołany, jest korygowany; próba nie jest samoczynnie przenoszona na inną datę. Historia odwołanych terminów pozostaje w bazie. Lokalizacja zajęć jest zapisywana przy terminie i zachowuje dawne powiązania. Nowe przeniesienie całej grupy do innej placówki jest zablokowane zgodnie ze specyfikacją.
 
 ## Panel rodzica
 
@@ -63,6 +77,7 @@ npm test
 python3 test/smoke.py
 python3 test/accounts.py
 python3 test/public_signup.py
+python3 test/foundations.py
 ```
 
 Testy jednostkowe sprawdzają naliczanie opłat, daty i wykluczenia. Test integracyjny na porcie 3107 używa starego schematu bazy i potwierdza migrację, zapisy, wykluczenia, poprawianie nazw, korekty, trenerów, logo i zachowanie danych po restarcie. Test na porcie 3118 sprawdza konta, izolację rodzin, wymuszenie rodzica przy dziecku, liczebność grupy, edycję zapisanej grupy, zachowanie cen i korekt, aktywację i wylogowanie. Oba używają tymczasowych baz i fikcyjnych danych; nie modyfikują bazy deweloperskiej.
@@ -81,7 +96,7 @@ npm run dev
 
 Późniejsze aktualizacje: zatrzymaj serwer, zrób kopię `data/`, wybierz Fetch origin → Pull origin w GitHub Desktop, uruchom ponownie `npm ci` i `npm run dev`, a następnie odśwież stronę. Jeśli sam edytowałeś kod, zachowaj te zmiany przed aktualizacją; nie używaj force/reset. Dla wersji z ZIP-a zachowaj `data/` i po wykonaniu kopii przenieś ten katalog do nowej wersji.
 
-GitHub synchronizuje kod. Baza, konta, sesje i logo pozostają lokalnie w ignorowanym `data/`; nie są przesyłane przez GitHub Desktop. Migracje schematu uruchamiają się automatycznie. Po tej aktualizacji pierwszy użytkownik lokalnej instalacji musi utworzyć konto administratora.
+GitHub synchronizuje kod. Baza, konta, sesje i logo pozostają lokalnie w ignorowanym `data/`; nie są przesyłane przez GitHub Desktop. Migracje schematu uruchamiają się automatycznie. Konto administratora tworzy się tylko wtedy, gdy instalacja nie ma jeszcze administratora. Aktualizacja zachowuje istniejące konta i hasła.
 
 ## Publiczna strona zapisów bez logowania
 
@@ -132,3 +147,5 @@ mają wyszukiwanie oraz filtry lokalizacji, grupy, miesiąca należności i sald
 filtrów; miesiąc odnosi się do należności, nie daty wykonania korekty. Saldo zerowe
 nie potwierdza wpłaty. Listy zawodników, należności i korekt mają strony po 20
 pozycji; liczniki i suma salda obejmują wszystkie wyniki wybranych filtrów.
+
+Administrator może zablokować konto rodzica w kartotece dziecka → Rodzic. Kończy to sesje i unieważnia zaproszenia; odblokowanie wymaga ponownego logowania. Operacja jest zapisywana w dzienniku.
