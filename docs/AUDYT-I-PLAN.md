@@ -13,6 +13,9 @@ kopię ustawień grup, okresy uczestnictwa, rezygnację z końcem miesiąca bez 
 bieżącej opłaty (decyzja użytkownika) oraz powrót z historią. Pozostałe elementy
 etapu 3, w tym próby/konwersja, kolejka i zgody, pozostają do wykonania.
 
+Dodano [zarządzanie użytkownikami](UZYTKOWNICY.md): listę kont, filtry, tworzenie
+kolejnych administratorów z aktywacją i MFA, edycję kontaktu oraz blokady dostępu.
+
 ## 1. Stos i działające podstawy
 
 - Node.js 24+, JavaScript ESM, wbudowane `http` i `node:sqlite`; bez frameworka i zależności runtime.

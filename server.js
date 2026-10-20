@@ -1,3 +1,4 @@
+import { createUserService } from './users.js';
 import http from 'node:http';
 import { migrateFoundations, migrateTrainerAccess, migrateAccountSecurity, migrateSeasons, migrateParticipation } from './migrations.js';
 import { createSeasonService } from './seasons.js';
@@ -94,6 +95,7 @@ const seasonService=createSeasonService(db);
 auth.validateSecurity();
 const guardians=createGuardians(db,auth);
 const trainerService=createTrainerService(db,auth);
+const userService=createUserService(db,auth);
 function chargedTotals() {
  const active=new Map(sessionsWithStatus().filter(s=>!s.excluded).map(s=>[s.id,s]));
  const charges=new Map(all('SELECT id,group_id,athlete_id FROM enrollments').map(charge=>[charge.id,charge]));
@@ -263,6 +265,7 @@ const server = http.createServer(withRequestContext(async (req,res) => {
    const allowedPaths=user.role==='trainer'?['/api/state','/api/trainer-notes']:parentPaths;
    if(user.role!=='admin'&&!allowedPaths.includes(url.pathname)) return send(403,{error:'Ta operacja wymaga konta administratora.'});
   }
+  if(req.method==='GET'&&url.pathname==='/api/users')return send(200,userService.list(url.searchParams));
   if(req.method==='GET'&&url.pathname==='/api/audit') {
    const before=url.searchParams.get('before');
    const limit=50;
@@ -289,6 +292,14 @@ const server = http.createServer(withRequestContext(async (req,res) => {
   }
   if (req.method === 'POST' && url.pathname.startsWith('/api/')) {
    const b=await readJSON(req);
+   if(url.pathname==='/api/users'||url.pathname.startsWith('/api/users/')) {
+    const actor=auth.user(req);
+    if(actor?.role!=='admin')return send(403,{error:'Wymagane aktywne konto administratora.'});
+    if(url.pathname==='/api/users')return send(201,userService.create(b));
+    if(url.pathname==='/api/users/update')return send(200,userService.update(b));
+    if(url.pathname==='/api/users/access')return send(200,userService.access(b,actor));
+    if(url.pathname==='/api/users/invite')return send(200,userService.invite(b));
+   }
    if(['/api/memberships/withdraw','/api/memberships/cancel-withdrawal'].includes(url.pathname))return send(200,participation.change(b,athleteById(b.athlete_id,user),url.pathname.endsWith('/cancel-withdrawal')));
    const guardianAction=url.pathname.slice('/api/guardians/'.length);
    if(url.pathname==='/api/seasons'||url.pathname==='/api/seasons/update')return send(url.pathname.endsWith('/update')?200:201,seasonService.save(b));

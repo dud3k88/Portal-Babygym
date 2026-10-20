@@ -8,7 +8,7 @@ const $ = selector => document.querySelector(selector);
 const money = value => new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' }).format(value / 100);
 const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const dayNames = ['niedziela', 'poniedziałek', 'wtorek', 'środa', 'czwartek', 'piątek', 'sobota'];
-const viewNames = { seasons:'Sezony', coach: 'Mój grafik i grupy', audit: 'Dziennik zmian', auth: 'Logowanie', athletes: 'Zawodnicy', groups: 'Grupy', locations: 'Lokalizacje', 'days-off': 'Dni wolne', trainers: 'Trenerzy', billing: 'Rozliczenia', settings: 'Wygląd', parent: 'Zapisy na zajęcia', children: 'Moje dzieci' };
+const viewNames = { users:'Użytkownicy', seasons:'Sezony', coach: 'Mój grafik i grupy', audit: 'Dziennik zmian', auth: 'Logowanie', athletes: 'Zawodnicy', groups: 'Grupy', locations: 'Lokalizacje', 'days-off': 'Dni wolne', trainers: 'Trenerzy', billing: 'Rozliczenia', settings: 'Wygląd', parent: 'Zapisy na zajęcia', children: 'Moje dzieci' };
 let toastTimer;
 let auditCursor = null;
 let auditVersion = 0;
@@ -67,6 +67,7 @@ function switchView(view) {
   $('.workspace-label').innerHTML = '<span class="workspace-dot"></span> ' + (!authInfo.user ? 'Evolution Academy' : authInfo.user.role === 'trainer' ? 'Panel trenera' : authInfo.user.role === 'parent' ? 'Panel rodzica' : 'Panel administratora');
   $('#notice').hidden = true;
   if(view==='audit') loadAudit();
+  if(view==='users') loadUsers();
 }
 
 function openDialog(id) {
@@ -1087,3 +1088,56 @@ $('#coach-note-form').onsubmit=async event=>{
     $('#coach-note-dialog').close();await refresh();notice('Notatka zapisana.');
   }catch(error){notice(error.message,true);}finally{button.disabled=false;}
 };
+
+let userRows=[],userPage=1,userRequest=0;
+const userRoles={admin:'Administrator',trainer:'Trener',parent:'Rodzic'};
+async function loadUsers(page=1) {
+  const version=++userRequest;
+  try {
+    const params=new URLSearchParams(new FormData($('#user-filters')));params.set('page',page);
+    const data=await api('users?'+params);
+    if(version!==userRequest||authInfo.user?.role!=='admin')return;
+    userRows=data.items;userPage=data.page;
+    $('#user-list').innerHTML=`<p class="hint">Liczba użytkowników: ${data.total}</p>`+data.items.map(user=>`<div class="entry exclusion-entry"><div><strong>${escape(user.name)}</strong> <span class="pill">${userRoles[user.role]}</span><small>${escape(user.email)}${user.phone?' · '+escape(user.phone):''}<br>${user.access_status==='blocked'?'Dostęp zablokowany':'Dostęp aktywny'} · ${user.activated?'Hasło ustawione':'Oczekuje na aktywację'}${user.role==='admin'?' · MFA: '+(user.mfa_enrolled?'włączone':'do skonfigurowania'):''}${user.id===authInfo.user.id?' · Twoje konto':''}</small></div><div class="heading-actions"><button class="secondary" data-edit-user="${user.id}">Edytuj</button>${!user.activated&&user.access_status==='active'?`<button class="secondary" data-invite-user="${user.id}">Link aktywacyjny</button>`:''}${user.id!==authInfo.user.id?`<button class="secondary" data-access-user="${user.id}" data-next-access="${user.access_status==='active'?'blocked':'active'}">${user.access_status==='active'?'Zablokuj dostęp':'Odblokuj dostęp'}</button>`:''}</div></div>`).join('');
+    if(!data.items.length)$('#user-list').innerHTML+='<p>Brak użytkowników spełniających wybrane filtry.</p>';
+    $('#user-pagination').innerHTML=`<button class="secondary" data-user-page="${page-1}" ${page<=1?'disabled':''}>Poprzednia</button><span>Strona ${page} z ${data.pages}</span><button class="secondary" data-user-page="${page+1}" ${page>=data.pages?'disabled':''}>Następna</button>`;
+  }catch(error){if(version===userRequest)notice(error.message,true);}
+}
+function userRoleHelp() {
+  const form=$('#user-form');
+  $('#user-role-help').textContent=form.elements.id.value?'Edytujesz dane kontaktowe. Rola i adres logowania pozostają bez zmian.':form.elements.role.value==='admin'?'Administrator ma dostęp do wszystkich danych i ustawień. Ustawi własne hasło i skonfiguruje MFA.':'Użytkownik ustawi własne hasło przez link aktywacyjny. Link przekaż mu samodzielnie; system nie wysyła emaila.';
+}
+function openUser(user=null) {
+  const form=$('#user-form');form.reset();
+  for(const key of ['id','name','email','phone','role'])form.elements[key].value=user?.[key]??(key==='role'?'parent':'');
+  form.elements.email.readOnly=Boolean(user);form.elements.role.disabled=Boolean(user);
+  $('#user-title').textContent=user?'Edytuj użytkownika':'Dodaj użytkownika';userRoleHelp();openDialog('user-dialog');
+}
+$('#user-form [name=role]').onchange=userRoleHelp;
+$('#user-filters').onsubmit=event=>{event.preventDefault();loadUsers();};
+$('#user-filters').onchange=()=>loadUsers();
+$('#user-filters').onreset=()=>setTimeout(()=>loadUsers(),0);
+$('#user-form').onsubmit=async event=>{
+  event.preventDefault();const form=event.target,button=form.querySelector('[type=submit]');button.disabled=true;
+  try {
+    const body=Object.fromEntries(new FormData(form));if(body.id)body.id=Number(body.id);else delete body.id;
+    const result=await api(body.id?'users/update':'users',body);
+    $('#user-dialog').close();await refresh();await loadUsers(body.id?userPage:1);
+    $('#account-name').textContent=authInfo.user.name;
+    if(result.token){$('#invitation-link').value=location.origin+'/#activate/'+result.token;openDialog('invitation-dialog');}
+    else notice('Dane użytkownika zapisane.');
+  }catch(error){notice(error.message,true);}finally{button.disabled=false;}
+};
+document.addEventListener('click',async event=>{
+  const button=event.target.closest('button');if(!button)return;
+  if(button.hasAttribute('data-new-user'))return openUser();
+  if(button.dataset.editUser)return openUser(userRows.find(user=>user.id===Number(button.dataset.editUser)));
+  if(button.dataset.userPage)return loadUsers(Number(button.dataset.userPage));
+  if(!button.dataset.inviteUser&&!button.dataset.accessUser)return;
+  if(button.dataset.accessUser&&!confirm(button.dataset.nextAccess==='blocked'?'Zablokować dostęp i zakończyć sesje tego użytkownika? Dane i historia pozostaną zachowane.':'Odblokować dostęp tego użytkownika?'))return;
+  button.disabled=true;
+  try {
+    if(button.dataset.inviteUser){const result=await api('users/invite',{id:Number(button.dataset.inviteUser)});$('#invitation-link').value=location.origin+'/#activate/'+result.token;openDialog('invitation-dialog');}
+    else {await api('users/access',{id:Number(button.dataset.accessUser),access_status:button.dataset.nextAccess});await refresh();await loadUsers(userPage);notice('Dostęp użytkownika został zmieniony.');}
+  }catch(error){notice(error.message,true);}finally{button.disabled=false;}
+});

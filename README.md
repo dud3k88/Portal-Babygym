@@ -48,6 +48,9 @@ Link z adresem localhost działa tylko na komputerze z serwerem. Wersja lokalna 
 
 ## Panel administratora
 
+- **Użytkownicy:** lista kont z filtrami, dodawanie administratorów/rodziców/trenerów,
+  edycja danych kontaktowych i blokowanie dostępu. Nowy administrator ustawia hasło
+  i MFA przez link aktywacyjny. [Instrukcja](docs/UZYTKOWNICY.md).
 - **Sezony:** nazwa, daty i archiwizacja. W ustawieniach grupy wybierasz sezon.
   Filtry sezonu są też w grupach, zawodnikach i rozliczeniach.
 - **Grupy:** najpierw wybierz lokalizację, potem grupę. Grupy są wyświetlane jedna pod drugą. Wiersz pokazuje termin, prowadzącego i liczbę zapisanych osób względem limitu. Przycisk **Wejdź** otwiera osobny widok grupy z zawodnikami, harmonogramem, miesięczną opłatą i przyciskiem edycji ustawień. Wybrany miesiąc dotyczy szczegółów harmonogramu, nie liczebności grupy. Liczebność wynika ze stałych przypisań, a nie z liczby miesięcznych naliczeń.
