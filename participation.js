@@ -18,6 +18,7 @@ export function createParticipation(db) {
     db.exec('SAVEPOINT participation_change');
     try {
       const member=db.prepare('SELECT * FROM memberships WHERE group_id=? AND athlete_id=?').get(groupId,athlete.id);
+      if(member?.status==='trial')throw Error('Zapis próbny wygasa zgodnie z terminem potwierdzenia. Przejście na zapis stały jest dostępne w kartotece.');
       if(!isCurrentMember(member,now))throw Error('Udział w tej grupie już się zakończył. Powrót wymaga nowego zapisu przy wolnym miejscu.');
       const period=db.prepare('SELECT * FROM membership_periods WHERE group_id=? AND athlete_id=? ORDER BY id DESC LIMIT 1').get(groupId,athlete.id);
       if(!period)throw Error('Brak okresu uczestnictwa. Skontaktuj się z administratorem.');

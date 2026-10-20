@@ -184,3 +184,30 @@ export function migrateParticipation(db) {
     db.exec('COMMIT');
   }catch(error){db.exec('ROLLBACK');throw error;}
 }
+
+export function migrateAdmissions(db) {
+ if(db.prepare('SELECT version FROM schema_migrations WHERE version=6').get())return;
+ db.exec('BEGIN IMMEDIATE');
+ try {
+  db.exec(`CREATE TABLE admission_settings(id INTEGER PRIMARY KEY CHECK(id=1),trial_hours INTEGER NOT NULL CHECK(trial_hours BETWEEN 1 AND 168),offer_hours INTEGER NOT NULL CHECK(offer_hours BETWEEN 1 AND 168));
+   INSERT INTO admission_settings VALUES(1,24,24);
+   CREATE TABLE trial_decisions(
+   enrollment_id INTEGER PRIMARY KEY REFERENCES enrollments(id),
+   ends_at TEXT NOT NULL,expires_at INTEGER NOT NULL,
+   status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','converted','expired')),
+   regular_enrollment_id INTEGER UNIQUE REFERENCES enrollments(id));
+   CREATE TABLE waiting_list(
+    id INTEGER PRIMARY KEY,group_id INTEGER NOT NULL REFERENCES groups(id),
+    athlete_id INTEGER NOT NULL REFERENCES athletes(id),payer_id INTEGER NOT NULL REFERENCES users(id),
+    status TEXT NOT NULL DEFAULT 'waiting' CHECK(status IN ('waiting','offered','accepted','cancelled','expired')),
+    created_at TEXT NOT NULL,expires_at INTEGER,accepted_enrollment_id INTEGER REFERENCES enrollments(id));
+   CREATE UNIQUE INDEX waiting_one_open ON waiting_list(group_id,athlete_id) WHERE status IN ('waiting','offered');
+   CREATE INDEX waiting_fifo ON waiting_list(group_id,status,id);`);
+  replaceAuditTriggers(db,'admission_settings',['id','trial_hours','offer_hours']);
+  replaceAuditTriggers(db,'trial_decisions',['enrollment_id','ends_at','expires_at','status','regular_enrollment_id'],['enrollment_id']);
+  replaceAuditTriggers(db,'waiting_list',['id','group_id','athlete_id','payer_id','status','created_at','expires_at','accepted_enrollment_id']);
+  if(db.prepare('PRAGMA foreign_key_check').all().length)throw Error('Migracja zapisów narusza powiązania.');
+  db.prepare('INSERT INTO schema_migrations VALUES(6,?,?)').run('Trial continuation and FIFO waiting list',new Date().toISOString());
+  db.exec('COMMIT');
+ }catch(error){db.exec('ROLLBACK');throw error;}
+}

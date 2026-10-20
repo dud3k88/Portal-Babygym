@@ -48,6 +48,9 @@ Link z adresem localhost działa tylko na komputerze z serwerem. Wersja lokalna 
 
 ## Panel administratora
 
+- **Lista rezerwowa i próby:** kolejka według czasu zgłoszenia, oferty miejsca
+  i potwierdzenie zapisu stałego po próbie. Domyślnie 24 h na decyzję, edytowalne
+  w ustawieniach kolejki. [Instrukcja etapu 3B](docs/ETAP-3B.md).
 - **Użytkownicy:** lista kont z filtrami, dodawanie administratorów/rodziców/trenerów,
   edycja danych kontaktowych i blokowanie dostępu. Nowy administrator ustawia hasło
   i MFA przez link aktywacyjny. [Instrukcja](docs/UZYTKOWNICY.md).

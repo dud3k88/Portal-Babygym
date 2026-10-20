@@ -8,7 +8,7 @@ const $ = selector => document.querySelector(selector);
 const money = value => new Intl.NumberFormat('pl-PL', { style: 'currency', currency: 'PLN' }).format(value / 100);
 const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const dayNames = ['niedziela', 'poniedziałek', 'wtorek', 'środa', 'czwartek', 'piątek', 'sobota'];
-const viewNames = { users:'Użytkownicy', seasons:'Sezony', coach: 'Mój grafik i grupy', audit: 'Dziennik zmian', auth: 'Logowanie', athletes: 'Zawodnicy', groups: 'Grupy', locations: 'Lokalizacje', 'days-off': 'Dni wolne', trainers: 'Trenerzy', billing: 'Rozliczenia', settings: 'Wygląd', parent: 'Zapisy na zajęcia', children: 'Moje dzieci' };
+const viewNames = { waiting:'Lista rezerwowa', users:'Użytkownicy', seasons:'Sezony', coach: 'Mój grafik i grupy', audit: 'Dziennik zmian', auth: 'Logowanie', athletes: 'Zawodnicy', groups: 'Grupy', locations: 'Lokalizacje', 'days-off': 'Dni wolne', trainers: 'Trenerzy', billing: 'Rozliczenia', settings: 'Wygląd', parent: 'Zapisy na zajęcia', children: 'Moje dzieci' };
 let toastTimer;
 let auditCursor = null;
 let auditVersion = 0;
@@ -130,7 +130,7 @@ async function loadAudit(append=false) {
     const result=await api('audit'+(append&&auditCursor?'?before='+auditCursor:''));
     if(version!==auditVersion||authInfo.user?.role!=='admin')return;
     auditCursor=result.next_cursor;
-    const entities={seasons:'Sezon',membership_periods:'Okres uczestnictwa',trainer_notes:'Notatka trenera',locations:'Placówka',users:'Konto',athletes:'Zawodnik',groups:'Grupa',sessions:'Termin',memberships:'Uczestnictwo',enrollments:'Należność',enrollment_sessions:'Pozycja należności',adjustments:'Korekta',exclusions:'Dni wolne',trainers:'Trener',group_trainers:'Przypisanie trenera',access:'Dostęp'};
+    const entities={admission_settings:'Ustawienia potwierdzeń',trial_decisions:'Kontynuacja próby',waiting_list:'Lista rezerwowa',seasons:'Sezon',membership_periods:'Okres uczestnictwa',trainer_notes:'Notatka trenera',locations:'Placówka',users:'Konto',athletes:'Zawodnik',groups:'Grupa',sessions:'Termin',memberships:'Uczestnictwo',enrollments:'Należność',enrollment_sessions:'Pozycja należności',adjustments:'Korekta',exclusions:'Dni wolne',trainers:'Trener',group_trainers:'Przypisanie trenera',access:'Dostęp'};
     const actions={insert:'Dodano',update:'Zmieniono',delete:'Usunięto','session.started':'Rozpoczęto sesję','session.ended':'Wylogowano','account.activated':'Aktywowano konto','invitation.created':'Utworzono zaproszenie'};
     const fields={season_id:'Sezon ID',registration_open:'Zapisy otwarte',withdrawal_reason:'Powód rezygnacji',body:'Treść',updated_at:'Data zmiany',user_id:'Konto ID',id:'ID',name:'Nazwa',email:'Email',phone:'Telefon',role:'Rola',access_status:'Dostęp',address:'Adres',city:'Miejscowość',contact_name:'Osoba kontaktowa',notes:'Notatki',status:'Status',parent_id:'Rodzic ID',birth_date:'Data urodzenia',location_id:'Placówka ID',capacity:'Limit miejsc',price:'Cena (gr)',trial_price:'Cena próby (gr)',trials:'Próby',start_date:'Od dnia',end_date:'Do dnia',start_time:'Od godziny',end_time:'Do godziny',weekday:'Dzień tygodnia',group_id:'Grupa ID',starts_at:'Początek',ends_at:'Koniec',cancelled:'Odwołano',athlete_id:'Zawodnik ID',joined_at:'Data zapisu',trial_id:'Próba ID',month:'Miesiąc',amount:'Kwota (gr)',enrollment_id:'Należność ID',session_id:'Termin ID',reason:'Powód',scope:'Zakres',trainer_id:'Trener ID'};
     const markup=result.items.map(entry=>{
@@ -146,7 +146,7 @@ async function loadAudit(append=false) {
 
 function enrollmentBody() {
   const body = Object.fromEntries(new FormData($('#enroll')));
-  return { ...body, athlete_id: Number(body.athlete_id), group_id: Number(body.group_id), trial_id: body.trial_id ? Number(body.trial_id) : null };
+  return { ...body, waitlist:queueSelected(), athlete_id: Number(body.athlete_id), group_id: Number(body.group_id), trial_id: body.trial_id ? Number(body.trial_id) : null };
 }
 
 async function refresh() {
@@ -172,6 +172,7 @@ async function refresh() {
   updateLocationSelect();
   renderAthletes();
   renderMyChildren();
+  renderWaiting();
   updateAthleteSelects();
   const selected = selectedIds('#new-group-trainers');
   $('#new-group-trainers').innerHTML = trainerCheckboxes(selected) || '<p class="hint">Nie dodano jeszcze trenerów. Grupę możesz na razie utworzyć bez prowadzącego.</p>';
@@ -194,7 +195,8 @@ function updateTrials() {
   $('#trial').innerHTML = '<option value="">Zapis stały</option>' + (group?.trials ? state.sessions.filter(s => s.group_id === group.id && s.starts_at.startsWith(month) && s.starts_at >= state.now && !s.excluded).map(s => `<option value="${s.id}">Próba ${escape(termLabel(s))} · ${money(group.trial_price)}</option>`).join('') : '');
   $('#trial').value = previous;
   if (!$('#trial').value) $('#trial').value = '';
-  $('#trial-label').hidden = !group?.trials;
+  $('#trial-label').hidden = !group?.trials||queueSelected();
+  if(queueSelected())$('#trial').value='';
   $('#group-info').innerHTML = group ? `<strong>${escape(group.name)}</strong><span>${escape(group.location)}</span><span>${escape(scheduleLabel(group))}</span><span>Trener: ${escape(trainersFor(group.id).map(trainer=>trainer.name).join(', ') || 'Nie przypisano')}</span>` : '';
   renderMonthlySessions();
   updateQuote();
@@ -208,7 +210,7 @@ async function updateQuote() {
   if (!$('#group').value) { $('#quote').textContent = 'Wybierz grupę i miesiąc'; return; }
   try {
     const quote = await api('quote', enrollmentBody());
-    if (version === quoteVersion) { submit.disabled=false; $('#quote').textContent = `${quote.count} ${$('#trial').value ? 'zajęcia próbne' : 'zajęcia'} · ${money(quote.amount)}`; }
+    if (version === quoteVersion) { submit.disabled=false; submit.textContent=queueSelected()?'Dołącz do listy rezerwowej':'Potwierdź zapis'; $('#quote').textContent = queueSelected()?'Lista rezerwowa — bez naliczania opłaty. Oferta miejsca pojawi się w Moich dzieciach.': `${quote.count} ${$('#trial').value ? 'zajęcia próbne' : 'zajęcia'} · ${money(quote.amount)}`; }
   } catch (error) {
     if (version === quoteVersion) $('#quote').textContent = error.message;
   }
@@ -319,7 +321,7 @@ function renderCalendar() {
   const sessions=state.sessions.filter(session=>session.group_id===group.id&&session.starts_at.startsWith(month)&&!session.cancelled);
   const active=sessions.filter(session=>!session.excluded);
   const members=state.memberships.filter(member=>member.group_id===group.id);
-  $('#calendar').innerHTML=`<div class="admin-group-detail"><div class="group-detail-heading"><div><h2>${escape(group.name)}</h2><p>${escape(groupStatusLabel(group))} · ${escape(seasonName(group.season_id))}</p><p>${escape(scheduleLabel(group))}</p><p>Trener: ${escape(trainersFor(group.id).map(person=>person.name).join(', ')||'Nie przypisano')}</p></div><div class="trainer-actions"><button class="secondary" data-edit-group="${group.id}">Edytuj ustawienia</button><button class="secondary" data-lifecycle="${group.id}">Status i zapisy</button><button class="secondary" data-copy-group="${group.id}">Skopiuj grupę</button></div></div><div class="detail-facts"><span><strong>${group.member_count} / ${group.capacity}</strong> zapisanych</span><span><strong>${money(group.price)}</strong> / zajęcia</span><span><strong>${active.length}</strong> zajęć w miesiącu</span><span><strong>${money(active.reduce((sum,session)=>sum+session.price,0))}</strong> za pełny miesiąc</span></div><h3>Zawodnicy</h3><div class="detail-roster">${members.map(member=>rosterRow(state.athletes.find(athlete=>athlete.id===member.athlete_id))+`<p class="hint">${member.status==='ended'?'Udział zakończony':member.ends_at?'Rezygnacja: miejsce zwalnia się '+escape(member.ends_at.slice(0,10)):'Aktywny udział'}</p>`).join('')||'<p class="hint">Brak zapisanych zawodników.</p>'}</div><h3>Terminy zajęć</h3><div>${sessions.map(session=>termMarkup(session)).join('')||'<p class="hint">Brak terminów w tym miesiącu.</p>'}</div></div>`;
+  $('#calendar').innerHTML=`<div class="admin-group-detail"><div class="group-detail-heading"><div><h2>${escape(group.name)}</h2><p>${escape(groupStatusLabel(group))} · ${escape(seasonName(group.season_id))}</p><p>${escape(scheduleLabel(group))}</p><p>Trener: ${escape(trainersFor(group.id).map(person=>person.name).join(', ')||'Nie przypisano')}</p></div><div class="trainer-actions"><button class="secondary" data-edit-group="${group.id}">Edytuj ustawienia</button><button class="secondary" data-lifecycle="${group.id}">Status i zapisy</button><button class="secondary" data-copy-group="${group.id}">Skopiuj grupę</button></div></div><div class="detail-facts"><span><strong>${group.member_count} / ${group.capacity}</strong> zapisanych</span><span><strong>${group.reserved_count||0}</strong> ofert z rezerwacją miejsca</span><span><strong>${money(group.price)}</strong> / zajęcia</span><span><strong>${active.length}</strong> zajęć w miesiącu</span><span><strong>${money(active.reduce((sum,session)=>sum+session.price,0))}</strong> za pełny miesiąc</span></div><h3>Zawodnicy</h3><div class="detail-roster">${members.map(member=>rosterRow(state.athletes.find(athlete=>athlete.id===member.athlete_id))+`<p class="hint">${member.status==='ended'?'Udział zakończony':member.status==='trial'?'Zapis próbny':member.ends_at?'Rezygnacja: miejsce zwalnia się '+escape(member.ends_at.slice(0,10)):'Aktywny udział'}</p>`).join('')||'<p class="hint">Brak zapisanych zawodników.</p>'}</div><h3>Lista rezerwowa</h3>${waitingMarkup(null,group.id)}<h3>Terminy zajęć</h3><div>${sessions.map(session=>termMarkup(session)).join('')||'<p class="hint">Brak terminów w tym miesiącu.</p>'}</div></div>`;
 }
 
 function seasonName(id) {return state.seasons.find(season=>season.id===id)?.name||'Bez sezonu';}
@@ -367,8 +369,10 @@ $('#lifecycle-form').onsubmit=async event=>{
 };
 function participationMarkup(member,history=true) {
   const periods=(state.membership_periods||[]).filter(period=>period.group_id===member.group_id&&period.athlete_id===member.athlete_id);
-  return `<p class="hint">Udział od ${escape(member.joined_at.slice(0,10))}${member.ends_at?' · miejsce zwalnia się '+escape(member.ends_at.slice(0,10)):''}</p>
-    ${member.status!=='ended'?`<button class="secondary" ${member.ends_at?`data-cancel-withdrawal="${member.group_id}"`:`data-withdraw-group="${member.group_id}"`} data-child="${member.athlete_id}">${member.ends_at?'Cofnij rezygnację':'Zrezygnuj z końcem miesiąca'}</button>`:''}
+  const trial=(state.trial_decisions||[]).find(entry=>entry.athlete_id===member.athlete_id&&entry.group_id===member.group_id&&entry.trial_id===member.trial_id&&entry.status!=='converted');
+  const trialAction=member.trial_id&&trial?`<p class="hint">${trial.status==='expired'?'Rezerwacja wygasła. Kontynuacja wymaga wolnego miejsca.':'Potwierdź kontynuację do '+escape(deadlineLabel(trial.expires_at))+'. Bez potwierdzenia miejsce zostanie zwolnione.'}</p><button class="secondary" data-trial-convert="${trial.enrollment_id}" data-child="${member.athlete_id}" ${state.now<trial.ends_at?'disabled':''}>${state.now<trial.ends_at?'Kontynuacja po zajęciach próbnych':'Przejdź na zapis stały'}</button>`:'';
+  return `${trialAction}<p class="hint">Udział od ${escape(member.joined_at.slice(0,10))}${member.ends_at?' · miejsce zwalnia się '+escape(member.ends_at.slice(0,10)):''}</p>
+    ${member.status!=='ended'&&member.status!=='trial'?`<button class="secondary" ${member.ends_at?`data-cancel-withdrawal="${member.group_id}"`:`data-withdraw-group="${member.group_id}"`} data-child="${member.athlete_id}">${member.ends_at?'Cofnij rezygnację':'Zrezygnuj z końcem miesiąca'}</button>`:''}
     ${history?`<details class="participation-history"><summary>Historia uczestnictwa (${periods.length})</summary>${periods.map(period=>`<div class="entry"><strong>${period.status==='trial'?'Próbny':'Stały'} · od ${escape(period.starts_at.slice(0,10))}</strong><small>${period.ends_at?'Zakończenie: '+escape(period.ends_at.replace('T',' ').slice(0,16)):'Bez wyznaczonego zakończenia'}</small>${period.withdrawal_reason?`<p>${escape(period.withdrawal_reason)}</p>`:''}</div>`).join('')}</details>`:''}`;
 }
 function openWithdrawal(athleteId,groupId) {
@@ -423,11 +427,11 @@ function renderRegistrationGroups() {
   if(!locationId){$('#available-groups').innerHTML='';return;}
   const groups=state.groups.filter(group=>group.location_id===locationId&&group.registration_available);
   $('#available-groups').innerHTML=groups.map(group=>{
-    const free=Math.max(0,group.capacity-group.member_count);
+    const free=Math.max(0,group.capacity-group.member_count-(group.reserved_count||0));
     const next=state.sessions.find(session=>session.group_id===group.id&&!session.excluded&&session.starts_at>=state.now&&session.starts_at.startsWith(state.now.slice(0,7)));
     const ownMember=state.memberships.some(member=>member.group_id===group.id&&member.status!=='ended'&&state.athletes.some(athlete=>athlete.id===member.athlete_id));
-    const eligible=Boolean(next)&&(free>0||ownMember);
-    return `<div class="registration-group"><div class="registration-group-main"><h2>${escape(group.name)}</h2><p>${escape(scheduleLabel(group))}</p><p>Trener: ${escape(trainersFor(group.id).map(trainer=>trainer.name).join(', ')||'Nie przypisano')}</p>${next?`<p class="hint">Najbliższe zajęcia: ${escape(termLabel(next))}</p>`:''}<p>${money(group.price)} / zajęcia</p></div><div class="registration-group-action"><span class="availability ${free===0?'full':''}">Wolne miejsca: ${free} / ${group.capacity}</span><button class="primary" data-register-group="${group.id}" ${eligible?'':'disabled'}>${!next?'Brak zajęć w tym miesiącu':free===0&&!ownMember?'Brak miejsc':'Zapisz dziecko'}</button></div></div>`;
+    const eligible=Boolean(next);
+    return `<div class="registration-group"><div class="registration-group-main"><h2>${escape(group.name)}</h2><p>${escape(scheduleLabel(group))}</p><p>Trener: ${escape(trainersFor(group.id).map(trainer=>trainer.name).join(', ')||'Nie przypisano')}</p>${next?`<p class="hint">Najbliższe zajęcia: ${escape(termLabel(next))}</p>`:''}<p>${money(group.price)} / zajęcia</p></div><div class="registration-group-action"><span class="availability ${free===0?'full':''}">Wolne miejsca: ${free} / ${group.capacity}</span><button class="primary" data-register-group="${group.id}" ${eligible?'':'disabled'}>${!next?'Brak zajęć w tym miesiącu':free===0&&!ownMember?'Dołącz do listy rezerwowej':'Zapisz dziecko'}</button></div></div>`;
   }).join('')||'<p class="hint">W tej lokalizacji nie ma jeszcze grup.</p>';
 }
 
@@ -606,7 +610,7 @@ $('#enroll').onsubmit = async event => {
     const result = await api('enrollments', enrollmentBody());
     $('#enrollment-dialog').close();
     await refresh();
-    notice(`Zapis potwierdzony. Należność: ${money(result.amount)}.`);
+    notice(result.queued?'Zgłoszenie na listę rezerwową zapisane. Sprawdzaj oferty w Moich dzieciach.':`Zapis potwierdzony. Należność: ${money(result.amount)}.`);
   } catch (error) { notice(error.message, true); }
   finally { updateQuote(); }
 };
@@ -792,7 +796,7 @@ function openAthleteDetail(id) {
     </section>
     <section role="tabpanel" id="athlete-panel-groups" aria-labelledby="athlete-tab-groups" tabindex="0" hidden>
       <div class="profile-section-heading"><h3>Przypisane grupy</h3><button class="secondary" data-enroll-athlete="${id}">Zapisz do grupy</button></div>
-      ${memberships.map(member=>{
+      ${waitingMarkup(id)}${memberships.map(member=>{
         const group=state.groups.find(entry=>entry.id===member.group_id);
         return `<div class="profile-group"><h3>${escape(group.name)}</h3><p>${escape(group.location)}</p><p>${escape(scheduleLabel(group))}</p><p>Trener: ${escape(trainersFor(group.id).map(trainer=>trainer.name).join(', ')||'Nie przypisano')}</p><span class="pill">${member.status==='ended'?'Udział zakończony':member.status==='trial'?'Zapis próbny':'Zapis stały'}</span>${participationMarkup(member)}</div>`;
       }).join('')||'<p class="hint">Zawodnik nie jest jeszcze przypisany do grupy.</p>'}
@@ -840,11 +844,11 @@ function renderMyChildren() {
   $('#my-children').innerHTML = state.athletes.map(athlete => {
     const memberships = state.memberships.filter(member => member.athlete_id === athlete.id);
     const balance = state.enrollments.filter(enrollment => enrollment.athlete_id === athlete.id).reduce((sum,enrollment)=>sum+enrollment.balance,0);
-    return `<article class="section-card child-card"><h2>${escape(athlete.name)}</h2><p class="hint">Należności: ${money(balance)} · płatności online w późniejszym etapie</p>${memberships.map(member=>{
+    return `<article class="section-card child-card"><h2>${escape(athlete.name)}</h2><p class="hint">Należności: ${money(balance)} · płatności online w późniejszym etapie</p>${waitingMarkup(athlete.id)}${memberships.map(member=>{
       const group=state.groups.find(entry=>entry.id===member.group_id);
       const terms=state.sessions.filter(session=>session.group_id===group.id&&session.starts_at>=state.now&&(!member.ends_at||session.starts_at<member.ends_at)&&member.status!=='ended'&&(!session.cancelled||member.trial_id===session.id)&&(!member.trial_id||session.id===member.trial_id)).slice(0,6);
       return `<div class="child-group"><h3>${escape(group.location)} / ${escape(group.name)}</h3><p class="hint">${member.status==='ended'?'Udział zakończony':member.status==='trial'?'Zajęcia próbne':'Zapis stały'}${group.start_time?' · '+escape(group.start_time)+'–'+escape(group.end_time):''}</p><p class="hint">Najbliższe terminy:</p>${terms.map(session=>termMarkup(session)).join('')||'<p class="hint">Brak przyszłych terminów.</p>'}${participationMarkup(member,false)}</div>`;
-    }).join('')||'<p>Dziecko nie jest jeszcze przypisane do grupy. Wybierz zajęcia w zakładce „Zapisy na zajęcia”.</p>'}<button class="secondary" data-athlete="${athlete.id}">Kartoteka i rozliczenia</button></article>`;
+    }).join('')||((state.waiting_list||[]).some(entry=>entry.athlete_id===athlete.id&&['waiting','offered'].includes(entry.status))?'':'<p>Dziecko nie jest jeszcze przypisane do grupy. Wybierz zajęcia w zakładce „Zapisy na zajęcia”.</p>')}<button class="secondary" data-athlete="${athlete.id}">Kartoteka i rozliczenia</button></article>`;
   }).join('')||emptyState('users','Dodaj swoje dziecko','Najpierw dodaj dane dziecka, a potem wybierz lokalizację i grupę.');
 }
 
@@ -1141,3 +1145,46 @@ document.addEventListener('click',async event=>{
     else {await api('users/access',{id:Number(button.dataset.accessUser),access_status:button.dataset.nextAccess});await refresh();await loadUsers(userPage);notice('Dostęp użytkownika został zmieniony.');}
   }catch(error){notice(error.message,true);}finally{button.disabled=false;}
 });
+
+function queueSelected() {
+ const group=state?.groups.find(g=>g.id===Number($('#group').value));
+ return Boolean(group&&group.capacity-group.member_count-(group.reserved_count||0)<=0&&!state.memberships.some(m=>m.group_id===group.id&&m.athlete_id===Number($('#enrollment-athlete').value)&&m.status!=='ended'));
+}
+$('#enrollment-athlete').onchange=updateTrials;
+function deadlineLabel(value){return new Intl.DateTimeFormat('pl-PL',{timeZone:'Europe/Warsaw',dateStyle:'short',timeStyle:'short'}).format(new Date(value));}
+function waitingMarkup(athleteId=null,groupId=null,history=false) {
+ const labels={waiting:'Oczekuje',offered:'Oferta miejsca',accepted:'Zapis potwierdzony',cancelled:'Anulowane',expired:'Oferta wygasła'};
+ return (state.waiting_list||[]).filter(entry=>(athleteId===null||entry.athlete_id===athleteId)&&(groupId===null||entry.group_id===groupId)&&(history||['waiting','offered'].includes(entry.status))).map(entry=>{
+  const child=state.athletes.find(a=>a.id===entry.athlete_id),group=state.groups.find(g=>g.id===entry.group_id);
+  return `<div class="entry"><strong>${escape(child?.name||'')} · ${escape(group?.location||'')} / ${escape(group?.name||'')}</strong><small>${labels[entry.status]}${entry.position?' · pozycja '+entry.position:''}${entry.status==='offered'?' · potwierdź do '+escape(deadlineLabel(entry.expires_at)):''}</small><div class="trainer-actions">${entry.status==='offered'?`<button class="primary" data-accept-offer="${entry.id}" data-child="${entry.athlete_id}" data-group="${entry.group_id}">Przyjmij miejsce</button>`:''}${['waiting','offered'].includes(entry.status)?`<button class="secondary" data-cancel-waiting="${entry.id}" data-child="${entry.athlete_id}">Zrezygnuj z kolejki</button>`:''}</div></div>`;
+ }).join('')||(groupId!==null?'<p class="hint">Brak zgłoszeń na liście rezerwowej.</p>':'');
+}
+function renderWaiting(){
+ if(state.user.role==='admin'){
+  $('#waiting-list').innerHTML=waitingMarkup(null,null,$('#waiting-filter').value==='all')||'<p class="hint">Brak zgłoszeń.</p>';
+  for(const field of ['trial_hours','offer_hours'])$('#admission-settings').elements[field].value=state.admission_settings[field];
+ }
+}
+$('#waiting-filter').onchange=renderWaiting;
+$('#admission-settings').onsubmit=async event=>{
+ event.preventDefault();try{const form=event.target;await api('admissions/settings',{trial_hours:Number(form.elements.trial_hours.value),offer_hours:Number(form.elements.offer_hours.value)});await refresh();notice('Terminy dla nowych prób i ofert zapisane.');}catch(error){notice(error.message,true);}
+};
+let admissionConfirmation;
+document.addEventListener('click',async event=>{
+ const button=event.target.closest('[data-trial-convert],[data-accept-offer],[data-cancel-waiting]');if(!button)return;
+ button.disabled=true;
+ try {
+  const athleteId=Number(button.dataset.child);
+  if(button.dataset.cancelWaiting){if(!confirm('Zrezygnować z miejsca na liście rezerwowej?'))return;await api('waiting/cancel',{id:Number(button.dataset.cancelWaiting),athlete_id:athleteId});await refresh();if($('#athlete-detail-dialog').open){openAthleteDetail(athleteId);selectAthleteTab('groups');}return;}
+  const conversion=Boolean(button.dataset.trialConvert),id=Number(button.dataset.trialConvert||button.dataset.acceptOffer);
+  const body={id,athlete_id:athleteId,month:state.now.slice(0,7)};
+  const q=await api(conversion?'trials/quote':'quote',conversion?body:{group_id:Number(button.dataset.group),month:body.month});
+  admissionConfirmation={path:conversion?'trials/convert':'waiting/accept',body:{...body,expected_amount:q.amount}};
+  $('#admission-summary').textContent=`${state.athletes.find(a=>a.id===athleteId).name}: ${q.count} pozostałych zajęć w bieżącym miesiącu. Należność: ${money(q.amount)}.`;
+  openDialog('admission-dialog');
+ }catch(error){notice(error.message,true);}finally{button.disabled=false;}
+});
+$('#admission-confirm').onsubmit=async event=>{
+ event.preventDefault();const button=event.target.querySelector('button');button.disabled=true;
+ try{await api(admissionConfirmation.path,admissionConfirmation.body);$('#admission-dialog').close();await refresh();if($('#athlete-detail-dialog').open){openAthleteDetail(admissionConfirmation.body.athlete_id);selectAthleteTab('groups');}notice('Zapis stały potwierdzony.');}catch(error){notice(error.message,true);}finally{button.disabled=false;}
+};

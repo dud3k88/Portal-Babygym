@@ -92,3 +92,7 @@ musi zatwierdzić organizator dla poszczególnych kategorii danych. Dziennik zaw
 historię danych osobowych; dostęp wyłącznie Administrator. Przyszłe usunięcia lub
 anonimizacja wymagają procedury obejmującej audyt, eksporty i rotację kopii. Wdrożenie
 samego dziennika nie oznacza spełnienia wszystkich obowiązków RODO.
+
+Migracja 6 i jednorazowe terminy dla dotychczasowych prób: [ETAP-3B.md](ETAP-3B.md).
+Po aktualizacji sprawdź ustawienia czasu decyzji w Liście rezerwowej.
+Dodatkowa weryfikacja: `python3 test/admissions.py` i scenariusz E2E admissions.

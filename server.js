@@ -1,6 +1,7 @@
+import { createAdmissions } from './admissions.js';
 import { createUserService } from './users.js';
 import http from 'node:http';
-import { migrateFoundations, migrateTrainerAccess, migrateAccountSecurity, migrateSeasons, migrateParticipation } from './migrations.js';
+import { migrateFoundations, migrateTrainerAccess, migrateAccountSecurity, migrateSeasons, migrateParticipation, migrateAdmissions } from './migrations.js';
 import { createSeasonService } from './seasons.js';
 import { createParticipation, isCurrentMember, membershipDTO, nextMonthStart } from './participation.js';
 import { createGuardians } from './guardians.js';
@@ -90,12 +91,15 @@ migrateTrainerAccess(db,process.env.DB_PATH || 'data/evolution.sqlite');
 migrateAccountSecurity(db);
 migrateSeasons(db);
 migrateParticipation(db);
+migrateAdmissions(db);
 const participation=createParticipation(db);
 const seasonService=createSeasonService(db);
 auth.validateSecurity();
 const guardians=createGuardians(db,auth);
 const trainerService=createTrainerService(db,auth);
 const userService=createUserService(db,auth);
+const admissions=createAdmissions(db,{sessions:sessionsWithStatus,quote,saveEnrollment,seasonService});
+admissions.bootstrap();
 function chargedTotals() {
  const active=new Map(sessionsWithStatus().filter(s=>!s.excluded).map(s=>[s.id,s]));
  const charges=new Map(all('SELECT id,group_id,athlete_id FROM enrollments').map(charge=>[charge.id,charge]));
@@ -167,7 +171,9 @@ function stateFor(user) {
  const ids=new Set(athletes.map(a=>a.id));
  const enrollments=all(`SELECT e.*, a.name AS child, g.name AS group_name, g.location, e.amount + COALESCE((SELECT SUM(a.amount) FROM adjustments a WHERE a.enrollment_id=e.id),0) AS balance FROM enrollments e JOIN groups g ON g.id=e.group_id JOIN athletes a ON a.id=e.athlete_id ORDER BY e.id DESC`).filter(e=>admin||ids.has(e.athlete_id));
  const enrollmentIds=new Set(enrollments.map(e=>e.id));
+ const waiting=all('SELECT * FROM waiting_list ORDER BY id').filter(entry=>admin||ids.has(entry.athlete_id));
  const ownGroupIds=new Set(all('SELECT * FROM memberships').filter(m=>ids.has(m.athlete_id)).map(m=>m.group_id));
+ for(const entry of waiting)ownGroupIds.add(entry.group_id);
  const availableLocations=new Set(all("SELECT id FROM locations WHERE status='active'").map(l=>l.id));
  const visibleGroups=all(`SELECT g.*,(SELECT COUNT(*) FROM memberships m WHERE m.group_id=g.id AND m.status IN ('active','trial') AND (m.ends_at IS NULL OR m.ends_at>academy_now())) AS member_count FROM groups g`).filter(g=>admin||(availableLocations.has(g.location_id)&&seasonService.available(g))||ownGroupIds.has(g.id));
  const visibleIds=new Set(visibleGroups.map(g=>g.id));
@@ -176,7 +182,7 @@ function stateFor(user) {
  const visibleLocations=new Set(visibleGroups.map(g=>g.location_id));
  const guardianLinks=guardians.links().filter(link=>admin||ids.has(link.athlete_id));
  const parentIds=new Set([user.id,...guardianLinks.map(link=>link.user_id)]);
- return {user,withdrawal_ends_at:nextMonthStart(),seasons:all('SELECT * FROM seasons ORDER BY start_date DESC').filter(season=>admin||visibleGroups.some(group=>group.season_id===season.id)),athletes,guardian_links:guardianLinks,guardian_invitations:all('SELECT id,athlete_id,email,invited_by,expires_at FROM guardian_invitations WHERE expires_at>?',Date.now()).filter(invitation=>admin||ids.has(invitation.athlete_id)),parents:all("SELECT id,name,email,phone,access_status,password_hash IS NOT NULL AS active FROM users WHERE role='parent' ORDER BY name").filter(parent=>admin||parentIds.has(parent.id)),memberships:all('SELECT * FROM memberships').filter(m=>admin||ids.has(m.athlete_id)).map(m=>membershipDTO(m)),membership_periods:all('SELECT * FROM membership_periods ORDER BY id DESC').filter(period=>admin||ids.has(period.athlete_id)),locations:admin?all('SELECT * FROM locations ORDER BY name'):all('SELECT id,name,status FROM locations ORDER BY name').filter(l=>availableLocations.has(l.id)||visibleLocations.has(l.id)),trainer_notes:admin?all('SELECT * FROM trainer_notes'):[],trainers:admin?all('SELECT t.*,u.password_hash IS NOT NULL AS account_active FROM trainers t LEFT JOIN users u ON u.id=t.user_id ORDER BY t.name'):all('SELECT id,name FROM trainers ORDER BY name').filter(t=>trainerIds.has(t.id)),group_trainers:trainerLinks,logo:existsSync(logoPath)?'/logo?v='+Date.now():null,groups:visibleGroups.map(group=>({...group,registration_available:availableLocations.has(group.location_id)&&seasonService.available(group)})),sessions:sessionsWithStatus().filter(s=>admin||ownGroupIds.has(s.group_id)||(visibleIds.has(s.group_id)&&s.starts_at>=warsawNow())),exclusions:admin?all('SELECT * FROM exclusions ORDER BY start_date'):[],enrollments,adjustments:all('SELECT * FROM adjustments ORDER BY id DESC').filter(a=>admin||enrollmentIds.has(a.enrollment_id)),now:warsawNow()};
+ return {user,waiting_list:waiting.map(entry=>({...entry,position:entry.status==='waiting'?db.prepare("SELECT COUNT(*) AS n FROM waiting_list WHERE group_id=? AND status='waiting' AND id<=?").get(entry.group_id,entry.id).n:null})),admission_settings:admissions.settings(),trial_decisions:all('SELECT t.*,e.athlete_id,e.group_id,e.trial_id FROM trial_decisions t JOIN enrollments e ON e.id=t.enrollment_id').filter(entry=>admin||ids.has(entry.athlete_id)),withdrawal_ends_at:nextMonthStart(),seasons:all('SELECT * FROM seasons ORDER BY start_date DESC').filter(season=>admin||visibleGroups.some(group=>group.season_id===season.id)),athletes,guardian_links:guardianLinks,guardian_invitations:all('SELECT id,athlete_id,email,invited_by,expires_at FROM guardian_invitations WHERE expires_at>?',Date.now()).filter(invitation=>admin||ids.has(invitation.athlete_id)),parents:all("SELECT id,name,email,phone,access_status,password_hash IS NOT NULL AS active FROM users WHERE role='parent' ORDER BY name").filter(parent=>admin||parentIds.has(parent.id)),memberships:all('SELECT * FROM memberships').filter(m=>admin||ids.has(m.athlete_id)).map(m=>membershipDTO(m)),membership_periods:all('SELECT * FROM membership_periods ORDER BY id DESC').filter(period=>admin||ids.has(period.athlete_id)),locations:admin?all('SELECT * FROM locations ORDER BY name'):all('SELECT id,name,status FROM locations ORDER BY name').filter(l=>availableLocations.has(l.id)||visibleLocations.has(l.id)),trainer_notes:admin?all('SELECT * FROM trainer_notes'):[],trainers:admin?all('SELECT t.*,u.password_hash IS NOT NULL AS account_active FROM trainers t LEFT JOIN users u ON u.id=t.user_id ORDER BY t.name'):all('SELECT id,name FROM trainers ORDER BY name').filter(t=>trainerIds.has(t.id)),group_trainers:trainerLinks,logo:existsSync(logoPath)?'/logo?v='+Date.now():null,groups:visibleGroups.map(group=>({...group,reserved_count:admissions.reserved(group.id),registration_available:availableLocations.has(group.location_id)&&seasonService.available(group)})),sessions:sessionsWithStatus().filter(s=>admin||ownGroupIds.has(s.group_id)||(visibleIds.has(s.group_id)&&s.starts_at>=warsawNow())),exclusions:admin?all('SELECT * FROM exclusions ORDER BY start_date'):[],enrollments,adjustments:all('SELECT * FROM adjustments ORDER BY id DESC').filter(a=>admin||enrollmentIds.has(a.enrollment_id)),now:warsawNow()};
 }
 async function readJSON(req) {
  if(!req.headers['content-type']?.startsWith('application/json')) throw Object.assign(Error('Wymagany format JSON.'),{status:415});
@@ -184,26 +190,32 @@ async function readJSON(req) {
  return JSON.parse(raw);
 }
 function saveEnrollment(b,athlete,payerId=athlete.parent_id) {
+ admissions.sync();
  const parent=db.prepare('SELECT * FROM users WHERE id=?').get(payerId);
-     const q=quote(b);
+     const q=quote(b.waitlist===true?{...b,trial_id:null}:b);
      const member=db.prepare('SELECT * FROM memberships WHERE group_id=? AND athlete_id=?').get(q.group.id,athlete.id);
      const count=db.prepare("SELECT COUNT(*) AS n FROM memberships WHERE group_id=? AND status IN ('active','trial') AND (ends_at IS NULL OR ends_at>academy_now())").get(q.group.id).n;
-     if(!isCurrentMember(member,q.joinedAt)&&count>=q.group.capacity) throw Error('Brak wolnych miejsc.');
+     const ownOffer=admissions.offerFor(q.group.id,athlete.id,b.offer_id);
+     if(ownOffer&&b.expected_amount!==q.amount)throw Error('Kwota uległa zmianie. Sprawdź podsumowanie.');
+     if(b.waitlist===true)return admissions.join(b,athlete,payerId);
+     if(!isCurrentMember(member,q.joinedAt)&&count+admissions.reserved(q.group.id,ownOffer?.id)>=q.group.capacity) throw Error('Brak wolnych miejsc. Możesz dołączyć do listy rezerwowej.');
+     if(member?.status==='trial'&&!q.trial) {
+      const trial=db.prepare('SELECT e.id FROM enrollments e JOIN trial_decisions t ON t.enrollment_id=e.id WHERE e.group_id=? AND e.athlete_id=? AND e.trial_id=? ORDER BY e.id DESC LIMIT 1').get(q.group.id,athlete.id,member.trial_id);
+      if(!isCurrentMember(member)&&trial)return admissions.convert({...b,id:trial.id,expected_amount:b.expected_amount??q.amount},athlete);
+      throw Error('Potwierdź przejście na zapis stały w kartotece dziecka.');
+     }
      if(db.prepare('SELECT id FROM enrollments WHERE group_id=? AND month=? AND athlete_id=?').get(q.group.id,q.month,athlete.id)) throw Error('Zawodnik jest już zapisany w tej grupie w wybranym miesiącu.');
      const id=Number(db.prepare('INSERT INTO enrollments(group_id,parent,email,child,month,trial_id,amount,created_at,athlete_id,payer_id) VALUES(?,?,?,?,?,?,?,?,?,?)').run(q.group.id,parent.name,parent.email,athlete.name,q.month,q.trial,q.amount,q.joinedAt,athlete.id,parent.id).lastInsertRowid);
      const current=isCurrentMember(member,q.joinedAt);
+     if(current&&member.status==='trial'&&q.trial)throw Error('Dziecko ma już aktywny zapis próbny w tej grupie.');
      if(current&&member.status==='active'&&q.trial)throw Error('Zawodnik z aktywnym zapisem stałym nie może ponownie zapisać się na próbę w tej grupie.');
      if(!current) {
       db.prepare("INSERT INTO memberships(group_id,athlete_id,status,joined_at,trial_id) VALUES(?,?,?,?,?) ON CONFLICT(group_id,athlete_id) DO UPDATE SET status=excluded.status,joined_at=excluded.joined_at,trial_id=excluded.trial_id,ends_at=NULL,withdrawal_reason=''").run(q.group.id,athlete.id,q.trial?'trial':'active',q.joinedAt,q.trial);
       participation.recordStart(q.group.id,athlete.id,q.trial?'trial':'active',q.joinedAt);
-     }else if(!q.trial&&member.status==='trial') {
-      db.prepare('UPDATE membership_periods SET ends_at=? WHERE group_id=? AND athlete_id=? AND (ends_at IS NULL OR ends_at>?)').run(q.joinedAt,q.group.id,athlete.id,q.joinedAt);
-      db.prepare("UPDATE memberships SET status='active',joined_at=?,trial_id=NULL WHERE group_id=? AND athlete_id=?").run(q.joinedAt,q.group.id,athlete.id);
-      participation.recordStart(q.group.id,athlete.id,'active',q.joinedAt);
-      if(member.ends_at)db.prepare('UPDATE membership_periods SET ends_at=?,withdrawal_reason=? WHERE group_id=? AND athlete_id=? AND ends_at IS NULL').run(member.ends_at,member.withdrawal_reason,q.group.id,athlete.id);
      }
      for(const term of sessionsWithStatus().filter(s=>s.group_id===q.group.id&&s.starts_at.startsWith(q.month)&&s.starts_at>=q.joinedAt&&!s.cancelled&&(!q.trial||s.id===q.trial))) db.prepare('INSERT INTO enrollment_sessions VALUES(?,?,?)').run(id,term.id,q.trial?q.amount:term.price);
 
+ if(q.trial)admissions.startTrial(id);
  return {id,amount:q.amount};
 }
 
@@ -215,6 +227,7 @@ const server = http.createServer(withRequestContext(async (req,res) => {
   res.setHeader('Cache-Control','no-store');
   res.setHeader('X-Content-Type-Options','nosniff');
   if(req.method==='POST'&&req.headers.origin&&req.headers.origin!==`http://${req.headers.host}`&&req.headers.origin!==`https://${req.headers.host}`) return send(403,{error:'Niedozwolone źródło żądania.'});
+  if(url.pathname.startsWith('/api/'))admissions.sync();
   requestContext.getStore().actorId = auth.user(req)?.id ?? null;
   if(url.pathname.startsWith('/api/auth/')) return await auth.route(req,res,url.pathname,req.method==='POST'?await readJSON(req):null,send);
   if(req.method==='GET'&&url.pathname==='/api/public/catalog') {
@@ -223,7 +236,7 @@ const server = http.createServer(withRequestContext(async (req,res) => {
    const activeGroups = new Set(all("SELECT g.* FROM groups g JOIN locations l ON l.id=g.location_id WHERE l.status='active'").filter(g=>seasonService.available(g)).map(g=>g.id));
    const publicLinks=all('SELECT * FROM group_trainers').filter(link=>activeGroups.has(link.group_id));
    const publicTrainerIds=new Set(publicLinks.map(link=>link.trainer_id));
-   return send(200,{logo:existsSync(logoPath)?'/logo':null,locations:activeLocations,groups:all(`SELECT id,location_id,name,capacity,price,trial_price,trials,weekday,start_time,end_time,(SELECT COUNT(*) FROM memberships m WHERE m.group_id=groups.id AND m.status IN ('active','trial') AND (m.ends_at IS NULL OR m.ends_at>academy_now())) AS member_count FROM groups`).filter(g=>activeGroups.has(g.id)),trainers:all('SELECT id,name FROM trainers ORDER BY name').filter(trainer=>publicTrainerIds.has(trainer.id)),group_trainers:publicLinks,sessions:sessionsWithStatus().filter(s=>activeGroups.has(s.group_id)&&!s.cancelled&&s.starts_at>=now).map(s=>({id:s.id,group_id:s.group_id,starts_at:s.starts_at,ends_at:s.ends_at,excluded:s.excluded})),now});
+   return send(200,{logo:existsSync(logoPath)?'/logo':null,locations:activeLocations,groups:all(`SELECT id,location_id,name,capacity,price,trial_price,trials,weekday,start_time,end_time,(SELECT COUNT(*) FROM memberships m WHERE m.group_id=groups.id AND m.status IN ('active','trial') AND (m.ends_at IS NULL OR m.ends_at>academy_now())) AS member_count FROM groups`).filter(g=>activeGroups.has(g.id)).map(g=>({...g,reserved_count:admissions.reserved(g.id)})),trainers:all('SELECT id,name FROM trainers ORDER BY name').filter(trainer=>publicTrainerIds.has(trainer.id)),group_trainers:publicLinks,sessions:sessionsWithStatus().filter(s=>activeGroups.has(s.group_id)&&!s.cancelled&&s.starts_at>=now).map(s=>({id:s.id,group_id:s.group_id,starts_at:s.starts_at,ends_at:s.ends_at,excluded:s.excluded})),now});
   }
   if(req.method==='POST'&&url.pathname==='/api/public/quote') {
    const q=quote(await readJSON(req));return send(200,{amount:q.amount,count:q.count});
@@ -261,7 +274,7 @@ const server = http.createServer(withRequestContext(async (req,res) => {
   if(url.pathname.startsWith('/api/')) {
    if(!user) return send(401,{error:'Zaloguj się, aby kontynuować.'});
    if (!['admin','trainer','parent'].includes(user.role)) return send(403,{error:'Brak dostępu dla tej roli.'});
-   const parentPaths=['/api/state','/api/athletes','/api/athletes/update','/api/quote','/api/enrollments','/api/memberships/withdraw','/api/memberships/cancel-withdrawal',...['invite','preview','accept','revoke','cancel'].map(action=>'/api/guardians/'+action)];
+   const parentPaths=['/api/state','/api/athletes','/api/athletes/update','/api/quote','/api/enrollments','/api/memberships/withdraw','/api/memberships/cancel-withdrawal','/api/waiting/join','/api/waiting/cancel','/api/waiting/accept','/api/trials/quote','/api/trials/convert',...['invite','preview','accept','revoke','cancel'].map(action=>'/api/guardians/'+action)];
    const allowedPaths=user.role==='trainer'?['/api/state','/api/trainer-notes']:parentPaths;
    if(user.role!=='admin'&&!allowedPaths.includes(url.pathname)) return send(403,{error:'Ta operacja wymaga konta administratora.'});
   }
@@ -301,13 +314,25 @@ const server = http.createServer(withRequestContext(async (req,res) => {
     if(url.pathname==='/api/users/invite')return send(200,userService.invite(b));
    }
    if(['/api/memberships/withdraw','/api/memberships/cancel-withdrawal'].includes(url.pathname))return send(200,participation.change(b,athleteById(b.athlete_id,user),url.pathname.endsWith('/cancel-withdrawal')));
+   if(url.pathname==='/api/admissions/settings')return send(200,admissions.saveSettings(b));
+   if(['/api/waiting/join','/api/waiting/cancel','/api/waiting/accept','/api/trials/quote','/api/trials/convert'].includes(url.pathname)) {
+    const current=auth.user(req);
+    if(!current||!['admin','parent'].includes(current.role))return send(401,{error:'Zaloguj się ponownie.'});
+    const athlete=athleteById(b.athlete_id,current);
+    if(url.pathname==='/api/waiting/join')return send(200,admissions.join(b,athlete,user.role==='parent'?user.id:athlete.parent_id));
+    if(url.pathname==='/api/waiting/cancel')return send(200,admissions.cancel(b,athlete));
+    if(url.pathname==='/api/waiting/accept')return send(200,admissions.accept(b,athlete));
+    if(url.pathname==='/api/trials/quote'){const q=admissions.conversionQuote(b,athlete);return send(200,{amount:q.amount,count:q.count});}
+    return send(200,admissions.convert(b,athlete));
+   }
    const guardianAction=url.pathname.slice('/api/guardians/'.length);
-   if(url.pathname==='/api/seasons'||url.pathname==='/api/seasons/update')return send(url.pathname.endsWith('/update')?200:201,seasonService.save(b));
+   if(url.pathname==='/api/seasons'||url.pathname==='/api/seasons/update'){
+    db.exec('BEGIN IMMEDIATE');try{const result=seasonService.save(b);admissions.sync();db.exec('COMMIT');return send(url.pathname.endsWith('/update')?200:201,result);}catch(error){db.exec('ROLLBACK');throw error;}
+   }
    if(url.pathname==='/api/groups/lifecycle') {
     const existing=group(b.id);
     const settings=seasonService.groupSettings({...b,start_date:existing.start_date,end_date:existing.end_date},existing,all('SELECT starts_at FROM sessions WHERE group_id=?',existing.id));
-    db.prepare('UPDATE groups SET season_id=?,status=?,registration_open=? WHERE id=?').run(settings.season_id,settings.status,settings.registration_open,existing.id);
-    return send(200,{id:existing.id});
+    db.exec('BEGIN IMMEDIATE');try{db.prepare('UPDATE groups SET season_id=?,status=?,registration_open=? WHERE id=?').run(settings.season_id,settings.status,settings.registration_open,existing.id);admissions.sync();db.exec('COMMIT');return send(200,{id:existing.id});}catch(error){db.exec('ROLLBACK');throw error;}
    }
    if(url.pathname.startsWith('/api/guardians/')&&['invite','preview','accept','revoke','cancel'].includes(guardianAction))return send(200,guardians[guardianAction](b,user));
    if(url.pathname==='/api/trainer-notes') {
@@ -382,7 +407,7 @@ const server = http.createServer(withRequestContext(async (req,res) => {
       db.prepare('UPDATE groups SET location=? WHERE location_id=?').run(name,id);
       db.prepare("UPDATE exclusions SET location=? WHERE scope='location' AND location_id=?").run(name,id);
      }
-     db.exec('COMMIT');return send(existing?200:201,{id});
+     admissions.sync();db.exec('COMMIT');return send(existing?200:201,{id});
     }catch(error){db.exec('ROLLBACK');throw error;}
    }
    if(url.pathname==='/api/trainers') {
@@ -420,7 +445,7 @@ const server = http.createServer(withRequestContext(async (req,res) => {
     try {
      const before=chargedTotals(),now=warsawNow();
      const count=existing?db.prepare("SELECT COUNT(*) AS n FROM memberships WHERE group_id=? AND status IN ('active','trial') AND (ends_at IS NULL OR ends_at>academy_now())").get(existing.id).n:0;
-     if(capacity<count) throw Error(`Limit nie może być mniejszy od liczby zapisanych zawodników (${count}).`);
+     if(capacity<count+admissions.reserved(existing?.id??-1)) throw Error(`Limit nie może być mniejszy od liczby zapisanych zawodników (${count} oraz zarezerwowane oferty).`);
      const id=existing?.id||Number(db.prepare('INSERT INTO groups(location,location_id,name,capacity,price,trial_price,trials) VALUES(?,?,?,?,?,?,?)').run(location.name,location.id,name,capacity,price,trialPrice,b.trials?1:0).lastInsertRowid);
      db.prepare('UPDATE groups SET location=?,location_id=?,name=?,capacity=?,price=?,trial_price=?,trials=?,start_date=?,end_date=?,start_time=?,end_time=?,weekday=? WHERE id=?').run(location.name,location.id,name,capacity,price,trialPrice,b.trials?1:0,b.start_date||null,b.end_date||null,b.start_time||null,b.end_time||null,b.weekday??null,id);
      db.prepare('UPDATE groups SET season_id=?,status=?,registration_open=? WHERE id=?').run(settings.season_id,settings.status,settings.registration_open,id);
@@ -447,7 +472,7 @@ const server = http.createServer(withRequestContext(async (req,res) => {
       for(const old of future) if(!used.has(old.id)) db.prepare('UPDATE sessions SET cancelled=1 WHERE id=?').run(old.id);
       reconcileExclusions(before,'Zmiana grafiku grupy: '+name);
      }
-     db.exec('COMMIT'); return send(existing?200:201,{id,count:terms.length});
+     admissions.sync();db.exec('COMMIT'); return send(existing?200:201,{id,count:terms.length});
     } catch(e) {db.exec('ROLLBACK');throw e;}
    }
    if(url.pathname==='/api/exclusions' || url.pathname==='/api/exclusions/remove') {
@@ -478,7 +503,7 @@ const server = http.createServer(withRequestContext(async (req,res) => {
      if(url.pathname.endsWith('/remove')) db.prepare('DELETE FROM exclusions WHERE id=?').run(entry.id);
      else for(const item of entries) db.prepare('INSERT INTO exclusions(start_date,end_date,scope,location,location_id,group_id,reason) VALUES(?,?,?,?,?,?,?)').run(item.start_date,item.end_date,item.scope,item.location,item.location_id,item.group_id,item.reason);
      reconcileExclusions(before,(url.pathname.endsWith('/remove')?'Usunięcie wykluczenia: ':'Wykluczenie: ')+entry.reason);
-     db.exec('COMMIT');return send(200,{ok:true});
+     admissions.sync();db.exec('COMMIT');return send(200,{ok:true});
     }catch(e){db.exec('ROLLBACK');throw e;}
    }
    if(url.pathname==='/api/quote') { const q=quote(b); return send(200,{amount:q.amount,count:q.count}); }

@@ -11,7 +11,10 @@ opisują raporty. Produkcyjna poczta i datowane zakresy trenera nadal wymagają 
 Wdrożono też [etap 3A](ETAP-3A.md): sezony, statusy/otwieranie zapisów,
 kopię ustawień grup, okresy uczestnictwa, rezygnację z końcem miesiąca bez korekty
 bieżącej opłaty (decyzja użytkownika) oraz powrót z historią. Pozostałe elementy
-etapu 3, w tym próby/konwersja, kolejka i zgody, pozostają do wykonania.
+etapu 3 opisują kolejne raporty.
+Wdrożono [etap 3B](ETAP-3B.md): potwierdzenie kontynuacji próby, osobne naliczenie,
+FIFO i rezerwowane oferty z terminem decyzji. Zgody oraz dalsze procesy nadal
+pozostają do wykonania.
 
 Dodano [zarządzanie użytkownikami](UZYTKOWNICY.md): listę kont, filtry, tworzenie
 kolejnych administratorów z aktywacją i MFA, edycję kontaktu oraz blokady dostępu.
