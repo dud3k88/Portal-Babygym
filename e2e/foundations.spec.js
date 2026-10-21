@@ -1,13 +1,14 @@
 import { enrollMfa } from './mfa-helper.js';
 import { test, expect } from '@playwright/test';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 let server, folder;
 const origin='http://127.0.0.1:3142';
 test.beforeAll(async()=>{
  folder=await mkdtemp(join(tmpdir(),'ea-e2e-'));
+ await writeFile(join(folder,'logo'),Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64'));
  server=spawn(process.execPath,['--import','./scripts/fixed-clock.mjs','server.js'],{
   env:{...process.env,HOST:'127.0.0.1',PORT:'3142',DB_PATH:join(folder,'db.sqlite'),LOGO_PATH:join(folder,'logo'),EA_TEST_NOW:'2099-09-01T10:00:00Z'},stdio:'ignore'});
  for(let i=0;i<100;i++) {
@@ -28,6 +29,9 @@ test('placówka, publiczny zapis, blokada rodzica, dziennik i mobilny panel',asy
   expect(response.ok(),await response.text()).toBeTruthy();return response.json();
  }
  await page.goto(origin);
+ await expect(page.locator('#brand-logo')).toBeVisible();
+ await expect(page.locator('#brand-fallback')).toBeHidden();
+ expect(await page.locator('#brand-logo').evaluate(img=>img.naturalWidth)).toBeGreaterThan(0);
  await page.locator('#auth-form [name=name]').fill('Administrator');
  await page.locator('#auth-form [name=email]').fill('admin@example.org');
  await page.locator('#auth-form [name=password]').fill('admin-test-password');

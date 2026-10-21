@@ -967,6 +967,10 @@ function showAuth(mode='login') {
 }
 
 async function initialize() {
+  const logo=$('#brand-logo'),fallback=$('#brand-fallback');
+  logo.onload=()=>{logo.hidden=false;fallback.hidden=true;};
+  logo.onerror=()=>{logo.hidden=true;fallback.hidden=false;};
+  logo.src='/logo';
   authInfo=await api('auth/status');
   if(window.location.hash.startsWith('#reset/')){authInfo.user=null;showAuth();return;}
   if(!authInfo.user){showAuth();return;}
