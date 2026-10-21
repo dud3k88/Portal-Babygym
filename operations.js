@@ -55,7 +55,7 @@ export function createCalendar(db,{sessions,guardians,chargedTotals,reconcileExc
  }
  function mark(user,b) {
   const s=lesson(b.session_id,user);
-  if(user.role==='parent')throw Object.assign(Error('Obecność sprawdza trener lub administrator.'),{status:403});
+  if(user.role!=='trainer')throw Object.assign(Error('Obecność sprawdza wyłącznie przypisany trener.'),{status:403});
   if(s.excluded||s.starts_at>warsawNow())throw Error('Obecność można sprawdzić po rozpoczęciu nieodwołanych zajęć.');
   if(!['present','absent','unmarked'].includes(b.status)||!roster(s).some(a=>a.id===b.athlete_id))throw Error('Nieprawidłowy zawodnik lub status.');
   const old=db.prepare('SELECT status FROM attendance WHERE session_id=? AND athlete_id=?').get(s.id,b.athlete_id);

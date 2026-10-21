@@ -83,3 +83,5 @@ input:focus, select:focus, button:focus-visible, a:focus-visible { outline: 2px 
   .primary, .secondary { padding: 12px; font-size: 13px; }
   #public-submit { max-width: 220px; }
 }
+/* Headings receive programmatic focus after step changes, without a browser frame. */
+.registration-card h2[tabindex="-1"]:focus, [id^="step-"] h2[tabindex="-1"]:focus { outline:none; }

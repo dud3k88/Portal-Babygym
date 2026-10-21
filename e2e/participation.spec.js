@@ -37,6 +37,9 @@ test('sezon, grupa, kopia, zamknięcie zapisów i rezygnacja rodzica z końcem m
   const location=(await api(page.context(),'locations',{name:'Przedszkole Testowe'})).id;
   await page.reload();await page.locator('nav [data-view=groups]').click();await page.locator('#groups [data-open=group-dialog]').first().click();
   const groupForm=page.locator('#create-group');
+  await expect(groupForm.locator('[name=price]')).toHaveValue('35');
+  await expect(groupForm.locator('[name=season_id]')).toHaveValue(String(seasonId));
+  await expect(page.locator('#group-trainer-picker')).not.toHaveAttribute('open','');
   await groupForm.locator('[name=location_id]').selectOption(String(location));await groupForm.locator('[name=name]').fill('Liski');
   await groupForm.locator('[name=season_id]').selectOption(String(seasonId));
   await groupForm.locator('[name=end_date]').fill('2099-10-31');

@@ -29,9 +29,9 @@ test('placówka, publiczny zapis, blokada rodzica, dziennik i mobilny panel',asy
   expect(response.ok(),await response.text()).toBeTruthy();return response.json();
  }
  await page.goto(origin);
- await expect(page.locator('#brand-logo')).toBeVisible();
- await expect(page.locator('#brand-fallback')).toBeHidden();
- expect(await page.locator('#brand-logo').evaluate(img=>img.naturalWidth)).toBeGreaterThan(0);
+ await expect(page.locator('#auth-logo')).toBeVisible();
+ await expect(page.locator('#auth-brand-fallback')).toBeHidden();
+ expect(await page.locator('#auth-logo').evaluate(img=>img.naturalWidth)).toBeGreaterThan(0);
  await page.locator('#auth-form [name=name]').fill('Administrator');
  await page.locator('#auth-form [name=email]').fill('admin@example.org');
  await page.locator('#auth-form [name=password]').fill('admin-test-password');
@@ -54,6 +54,7 @@ test('placówka, publiczny zapis, blokada rodzica, dziennik i mobilny panel',asy
  try {
   parentPage.on('pageerror',error=>errors.push(error.message));
   await parentPage.goto(origin+'/zapisy');
+  expect(await parentPage.locator('#step-1 h2').evaluate(e=>document.activeElement===e)).toBeFalsy();
   await parentPage.selectOption('#public-location',String(location));
   await expect(parentPage.locator('#public-group-list')).toContainText('Ruch i zabawa');
   await parentPage.locator('[name=group_id]').check();
@@ -131,6 +132,26 @@ test('placówka, publiczny zapis, blokada rodzica, dziennik i mobilny panel',asy
   await page.locator('#operation-form [type=submit]').click();
   await expect(page.locator('#business-records')).toContainText('Koszt testowy');
   await expect(page.locator('#business-report')).toContainText('100,00');
+  await page.locator('nav [data-view=dashboard]').click();
+  await expect(page.locator('.dashboard-metrics button')).toHaveCount(5);
+  await expect(page.locator('.dashboard-grid article').last()).toContainText('Dzisiejsze zajęcia');
+  await page.locator('#dashboard [data-new-athlete]').click();
+  await page.locator('#save-athlete [name=name]').fill('Alicja Nowa');
+  await page.locator('#save-athlete [type=submit]').click();
+  await page.selectOption('#athlete-parent-mode','new');
+  await page.locator('#save-athlete [name=parent_name]').fill('Nowy Rodzic');
+  await page.locator('#save-athlete [name=parent_email]').fill('nowy@example.org');
+  await page.locator('#save-athlete [name=parent_phone]').fill('123456789');
+  await page.locator('#save-athlete [type=submit]').click();
+  await expect(page.locator('#athlete-dialog')).toBeHidden();
+  const updated=await (await page.request.get(origin+'/api/state')).json();
+  const added=updated.athletes.find(a=>a.name==='Alicja Nowa');expect(updated.parents.find(p=>p.id===added.parent_id).email).toBe('nowy@example.org');
+  await page.locator('nav [data-view=finance]').click();await page.locator('[data-finance-action=discount]').click();
+  await page.locator('[data-option-search=athlete_id]').fill('Alicja');
+  await expect(page.locator('#operation-form [name=athlete_id] option')).toHaveCount(2);
+  await page.selectOption('#operation-form [name=athlete_id]',String(added.id));
+  await page.locator('#operation-form [name=ends_on]').fill('2099-09-30');await page.locator('#operation-form [name=value]').fill('10');await page.locator('#operation-form [name=reason]').fill('Rabat testowy');
+  await page.locator('#operation-form [type=submit]').click();await expect(page.locator('#operation-dialog')).toBeHidden();
   expect(errors).toEqual([]);
  }finally{await parentContext.close();}
 });

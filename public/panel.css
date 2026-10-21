@@ -132,3 +132,23 @@ input,select,textarea { border-radius: 6px; padding: 11px 12px; font-size: 14px;
 .form-message.success { background:#edf6f0;border-color:#bedbc7;color:#286537; }
 #trainer-profile-content h3 { margin-top:24px;margin-bottom:12px; }
 #trainer-profile-content .hint { font-size:13px;line-height:1.6; }
+body.login-screen .sidebar,body.login-screen .topbar { display:none; }
+body.login-screen main { margin:0;max-width:none;min-height:100dvh;display:grid;place-items:center;padding:32px 16px; }
+body.login-screen #auth { width:100%;max-width:460px;padding:0;margin:0; }
+body.login-screen .auth-card { margin:0;width:100%;max-width:none;padding:32px; }
+.auth-brand { text-align:center;margin:0 auto 24px; }
+.auth-brand img { display:block;width:190px;max-width:100%;height:auto;max-height:72px;object-fit:contain;margin:auto; }
+#auth-brand-fallback { font-size:20px;font-weight:600;color:var(--accent); }
+#auth .eyebrow { display:none; }
+.dashboard-metrics { grid-template-columns:repeat(5,minmax(0,1fr)); }
+.dashboard-metrics button { position:relative;padding-top:54px; }
+.dashboard-metrics .metric-icon { position:absolute;top:16px;left:18px;color:var(--accent); }
+.dashboard-metrics .metric-0 { background:#fdf5fa; }.dashboard-metrics .metric-1{background:#fff5f1;border-left-color:#e7836c}.dashboard-metrics .metric-2{background:#faf6ff;border-left-color:#a783bd}.dashboard-metrics .metric-3{background:#fff9ee;border-left-color:#e8ab51}.dashboard-metrics .metric-4{background:#f1f8f4;border-left-color:#7eaf91}
+.dashboard-wide { grid-column:1/-1; }.dashboard-scroll-list { max-height:360px;overflow-y:auto;padding-right:4px; }
+#group-trainer-picker { border:1px solid var(--line);border-radius:6px; }
+#group-trainer-picker summary { cursor:pointer;padding:12px 16px; }
+#group-trainer-picker .checkbox-list { max-height:240px;overflow-y:auto;padding:12px; }
+#athlete-new-parent { display:grid;gap:14px; }#save-athlete fieldset { margin-bottom:18px; }
+@media(max-width:1150px){.dashboard-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:650px){.dashboard-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.login-screen .auth-card{padding:24px}.dashboard-grid .section-toolbar{flex-wrap:wrap}}
+#passkey-login { width:100%;margin-bottom:12px; }#passkey-fallback { margin-bottom:16px; }#passkey-list{margin-top:20px}.settings-card{margin-bottom:20px}

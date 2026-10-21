@@ -27,6 +27,14 @@ with tempfile.TemporaryDirectory() as folder:
   parent.call('auth/register',{'name':'Rodzic','email':'parent@example.org','password':'parent-test-password'},201)
   other.call('auth/register',{'name':'Inny','email':'other@example.org','password':'parent-test-password'},201)
   child=parent.call('athletes',{'name':'Dziecko'},201)['id']
+  combined={'name':'Nowe dziecko','parent_name':'Nowy Rodzic','parent_email':'new-parent@example.org','parent_phone':'123456789'}
+  parent.call('athletes/with-parent',combined,403)
+  admin.call('athletes/with-parent',{**combined,'birth_date':'2999-01-01'},400)
+  assert not any(p['email']=='new-parent@example.org' for p in admin.call('state')['parents'])
+  created=admin.call('athletes/with-parent',combined,201)
+  assert next(a for a in admin.call('state')['athletes'] if a['id']==created['id'])['parent_id']==created['parent_id']
+  admin.call('athletes/with-parent',combined,400)
+
   result=admin.call('users',{'name':'Trener','email':'coach@example.org','role':'trainer'},201);coach.call('auth/activate',{'token':result['token'],'password':'coach-test-password'})
   trainer=admin.call('state')['trainers'][0]['id']
   availability=admin.call('business/availability',{'trainer_id':trainer,'starts_at':'2099-09-10T12:00','ends_at':'2099-09-10T15:00','kind':'unavailable','reason':'Test formularza'})
@@ -41,6 +49,7 @@ with tempfile.TemporaryDirectory() as folder:
   coach.call('calendar/mark',{'session_id':session,'athlete_id':child,'status':'present'},400)
   parent.call('calendar/mark',{'session_id':session,'athlete_id':child,'status':'present'},403)
   p.terminate();p.wait();env['EA_TEST_NOW']='2099-09-01T13:00:00Z';p=start()
+  admin.call('calendar/mark',{'session_id':session,'athlete_id':child,'status':'present'},403)
   coach.call('calendar/mark',{'session_id':session,'athlete_id':child,'status':'present'})
   coach.call('calendar/complete',{'session_id':session,'completed':True})
   coach.call('calendar/complete',{'session_id':session,'completed':True})

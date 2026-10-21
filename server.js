@@ -13,7 +13,7 @@ import { createCalendar } from './operations.js';
 import { createAdmissions } from './admissions.js';
 import { createUserService } from './users.js';
 import http from 'node:http';
-import { migrateFoundations, migrateTrainerAccess, migrateAccountSecurity, migrateSeasons, migrateParticipation, migrateAdmissions, migrateOperations, migrateFinance, migrateWorkspace, migrateMethodology, migrateBusiness, migrateDirectoryOperations, migrateRegistrationRules, migratePaymentDeadlines } from './migrations.js';
+import { migrateFoundations, migrateTrainerAccess, migrateAccountSecurity, migrateSeasons, migrateParticipation, migrateAdmissions, migrateOperations, migrateFinance, migrateWorkspace, migrateMethodology, migrateBusiness, migrateDirectoryOperations, migrateRegistrationRules, migratePaymentDeadlines, migratePasskeys } from './migrations.js';
 import { createSeasonService } from './seasons.js';
 import { createParticipation, isCurrentMember, membershipDTO, nextMonthStart } from './participation.js';
 import { createGuardians } from './guardians.js';
@@ -112,6 +112,7 @@ migrateBusiness(db);
 migrateDirectoryOperations(db);
 migrateRegistrationRules(db);
 migratePaymentDeadlines(db);
+migratePasskeys(db);
 const participation=createParticipation(db);
 const seasonService=createSeasonService(db);
 auth.validateSecurity();
@@ -443,6 +444,19 @@ const server = http.createServer(withRequestContext(async (req,res) => {
     }catch(error){db.exec('ROLLBACK');throw error;}
    }
    if(url.pathname==='/api/parents/invite') return send(200,{token:auth.invite(integer(b.parent_id,1,Number.MAX_SAFE_INTEGER))});
+   if(url.pathname==='/api/athletes/with-parent') {
+    if(user.role!=='admin')return send(403,{error:'Wymagane konto administratora.'});
+    const result=registrationTransaction(db,()=>{
+     const name=text(b.name,'imię i nazwisko zawodnika'),parentName=text(b.parent_name,'imię i nazwisko rodzica'),email=emailAddress(b.parent_email),phone=text(b.parent_phone,'telefon');
+     const birthDate=b.birth_date||null,notes=String(b.notes||'');
+     if(birthDate&&(!validDate(birthDate)||birthDate>warsawNow().slice(0,10)))throw Error('Podaj poprawną datę urodzenia.');
+     if(notes.length>2000)throw Error('Notatka może mieć maksymalnie 2000 znaków.');
+     if(db.prepare('SELECT id FROM users WHERE email=?').get(email))throw Error('Rodzic z tym adresem email już istnieje. Wybierz go z listy.');
+     const parentId=Number(db.prepare("INSERT INTO users(name,email,phone,role,created_at) VALUES(?,?,?,'parent',?)").run(parentName,email,phone,warsawNow()).lastInsertRowid);
+     const id=Number(db.prepare('INSERT INTO athletes(id,parent_id,name,birth_date,notes,created_at) VALUES(?,?,?,?,?,?)').run(nextAthleteId(db),parentId,name,birthDate,notes,warsawNow()).lastInsertRowid);
+     return {id,parent_id:parentId};
+    });return send(201,result);
+   }
    if(url.pathname==='/api/athletes'||url.pathname==='/api/athletes/update') {
     const existing=url.pathname.endsWith('/update')?athleteById(b.id,user):null;
     const name=text(b.name,'imię i nazwisko zawodnika'),parentId=user.role==='admin'?integer(b.parent_id,1,Number.MAX_SAFE_INTEGER):(existing?.parent_id??user.id);

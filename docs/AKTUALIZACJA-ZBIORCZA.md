@@ -228,3 +228,54 @@ a lista jest filtrowana według miesiąca. Rodzic nie otrzymuje historii innych 
 Zmiana nie wymaga migracji bazy. Testy obejmują rozkład nakładających się terminów,
 prywatność historii obecności, normalizację czasu formularza, pulpit, nawigację
 kartotek, zgłoszenie/zatwierdzenie nieobecności, stawkę z karty i widok mobilny.
+
+## Poprawki z „Panel Evolution 2.0.pdf” i logowanie telefonem
+
+- Logowanie jest osobną kartą z małym logo, bez menu i górnego paska.
+- Pulpit ma ikony, delikatnie różniące się tła i przychód naliczony za wybrany miesiąc
+  (nie jest to kwota otrzymanych wpłat). „Wymaga uwagi” i zajęcia są na dole, w osobnych
+  sekcjach z ograniczoną wysokością list. Ostatnich zawodników jest najwyżej pięciu,
+  ze skrótem do pełnej listy.
+- Obecności wpisują wyłącznie przypisani trenerzy; administrator ma podgląd, a API
+  odrzuca jego próby wpisania obecności. Organizacja terminów pozostaje dostępna adminowi.
+- Dodawanie dziecka ma krok danych dziecka i krok rodzica: wybór istniejącego albo
+  utworzenie nowego z imieniem, nazwiskiem, emailem i telefonem. Nowy rodzic i dziecko
+  są zapisywani atomowo. Istniejący email wymaga wyboru rodzica z listy, bez dublowania
+  kont. Nowe konto rodzica nadal wymaga aktywacji linkiem.
+- Nowa grupa ma stawkę 35 zł, bieżący aktywny sezon (przy kilku: najpóźniej rozpoczęty)
+  i rozwijaną listę trenerów z możliwością wyboru kilku osób. Edycja zachowuje ustawienia.
+- Rabat indywidualny ma wyszukiwanie zawodnika; trzeba wskazać osobę z wyników.
+- Formularz publiczny nie ustawia fokusu na nagłówku przy otwarciu. Przy przechodzeniu
+  między krokami nagłówek otrzymuje fokus bez niebieskiej ramki. Pola i przyciski
+  zachowują widoczny fokus klawiatury.
+
+### Klucze dostępu jako drugi składnik (migracja 15)
+
+Administrator nadal wpisuje email i hasło. Jeśli dodał passkey, może potwierdzić
+logowanie telefonem albo zgodnym kluczem sprzętowym. Authenticator i kody zapasowe
+pozostają dostępne. Pierwsze dodanie klucza wymaga pełnego zalogowania obecną metodą.
+
+Na Macu używaj stale tego samego adresu, np. `http://localhost:3000`. Po zalogowaniu
+otwórz **Wygląd i logowanie → Dodaj telefon / klucz dostępu**, nazwij urządzenie,
+naciśnij Zapisz i w oknie przeglądarki wybierz telefon/inne urządzenie. Przeglądarka
+może wyświetlić QR; telefon potwierdza operację biometrią lub PIN-em. Dostępność
+zależy od przeglądarki i urządzenia, a połączenie między urządzeniami może wymagać
+Bluetooth. Nie jest to integracja wysyłająca powiadomienia push.
+
+Dla publicznego wdrożenia ustaw `WEBAUTHN_ORIGIN=https://adres-panelu.example` na
+rzeczywisty adres aplikacji i używaj HTTPS. Klucze są przypisane do domeny; zmiana
+localhost na domenę produkcyjną wymaga ponownego dodania klucza. Nie wpisuj domeny
+strony marketingowej, jeśli panel działa pod inną domeną.
+
+Weryfikacja używa biblioteki SimpleWebAuthn, wymaga weryfikacji użytkownika,
+sprawdza domenę/origin, podpis, licznik oraz jednorazowe wyzwanie związane z sesją
+po haśle. Wyzwania wygasają po pięciu minutach i są usuwane przy wylogowaniu.
+Klucz prywatny pozostaje na urządzeniu. Lista, dodawanie i usuwanie kluczy dotyczą
+wyłącznie własnego konta administratora. Metoda nie osłabia blokady konta ani MFA.
+
+Walidacja: 39 testów Node (38 w pełnym przebiegu i dodany test migracji), integracje
+operations/foundations/security i 7 scenariuszy Playwright. Passkey sprawdzono
+w Chromium na wirtualnym uwierzytelniaczu: rejestracja, drugi składnik, odrzucenie
+obcego origin i starego potwierdzenia, brak dostępu przed drugim składnikiem,
+usunięcie i powrót do Authenticatora. Parowanie z fizycznym telefonem pozostaje
+do wykonania na urządzeniu użytkownika.

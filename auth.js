@@ -1,3 +1,4 @@
+import {createPasskeys} from './passkeys.js';
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual, createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { createSecurity, base32, matchingStep } from './security.js';
@@ -49,6 +50,7 @@ export function createAuth(db, onEvent = () => {}) {
   function status(req) {
     const account=accountFor(req),current=user(req);
     return {user:current,needs_setup:needsSetup(),mfa_required:account?.role==='admin'&&!current,
+      passkey_available:account?.role==='admin'?Boolean(db.prepare('SELECT 1 FROM passkeys WHERE user_id=?').get(account.id)):false,
       mfa_enrolled:account?.role==='admin'?Boolean(db.prepare('SELECT 1 FROM admin_mfa WHERE user_id=?').get(account.id)):false};
   }
   function atomic(work) {
@@ -82,7 +84,9 @@ export function createAuth(db, onEvent = () => {}) {
     });
     return token;
   }
+  const passkeys=createPasskeys(db,{user,accountFor,tokenHash,session,atomic,onEvent});
   async function route(req, res, path, body, send) {
+    if(req.method==='GET'&&path==='/api/auth/passkeys')return passkeys.route(req,res,path,body,send);
     if (req.method === 'GET' && path === '/api/auth/status') return send(200,status(req));
     if (req.method !== 'POST') return send(404, { error: 'Nie znaleziono operacji.' });
     const key = req.socket.remoteAddress;
@@ -93,6 +97,7 @@ export function createAuth(db, onEvent = () => {}) {
       if (bucket && bucket.until > now && bucket.count >= 30) return send(429, { error: 'Zbyt wiele prób. Spróbuj ponownie za 15 minut.' });
       attempts.set(key, bucket && bucket.until > now ? { ...bucket, count: bucket.count + 1 } : { until: now + 900000, count: 1 });
     }
+    if(path.startsWith('/api/auth/passkeys/'))return passkeys.route(req,res,path,body,send);
     if (path === '/api/auth/logout') {
       const current=user(req);
       const token = (req.headers.cookie || '').split(';').map(part => part.trim()).find(part => part.startsWith('ea_session='))?.slice(11);

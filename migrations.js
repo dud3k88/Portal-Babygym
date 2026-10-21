@@ -350,3 +350,13 @@ export function migratePaymentDeadlines(db){
  db.prepare('INSERT INTO schema_migrations VALUES(14,?,?)').run('Payment deadlines and optional registration questions',new Date().toISOString());db.exec('COMMIT');
  }catch(e){db.exec('ROLLBACK');throw e;}
 }
+
+export function migratePasskeys(db){
+ if(db.prepare('SELECT version FROM schema_migrations WHERE version=15').get())return;
+ db.exec('BEGIN IMMEDIATE');try{
+ db.exec(`CREATE TABLE passkeys(id TEXT PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id),public_key BLOB NOT NULL,counter INTEGER NOT NULL,transports TEXT NOT NULL,label TEXT NOT NULL,created_at TEXT NOT NULL,last_used_at TEXT);
+ CREATE TABLE passkey_challenges(token_hash TEXT PRIMARY KEY REFERENCES auth_sessions(token_hash) ON DELETE CASCADE,user_id INTEGER NOT NULL REFERENCES users(id),kind TEXT NOT NULL,challenge TEXT NOT NULL,origin TEXT NOT NULL,rp_id TEXT NOT NULL,expires_at INTEGER NOT NULL);`);
+ replaceAuditTriggers(db,'passkeys',['id','user_id','label','created_at','last_used_at']);
+ db.prepare('INSERT INTO schema_migrations VALUES(15,?,?)').run('Administrator passkeys as second factor',new Date().toISOString());db.exec('COMMIT');
+ }catch(error){db.exec('ROLLBACK');throw error;}
+}
